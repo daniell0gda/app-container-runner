@@ -1,0 +1,62 @@
+{
+  "shared": {
+    "hostWorkspaceRoot": "/mnt/nas_ssd/quick_access_for_pc/hermes/workspaces",
+    "hermesWorkspaceRoot": "/workspace/workspaces",
+    "defaultWorkerWorkspaceRoot": "/workspaces",
+    "managedLabel": "ai.runner.managed",
+    "managedLabelValue": "true"
+  },
+  "profiles": {
+    "piwotworki": {
+      "image": "piwotworki-dev:latest",
+      "allowedExecutables": [
+        "npm",
+        "npx",
+        "node",
+        "git",
+	"jest"
+      ],
+      "mounts": [
+        {
+          "sourceFromShared": "hostWorkspaceRoot",
+          "target": "/workspaces",
+          "readOnly": false
+        }
+      ],
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "command": [
+        "sleep",
+        "infinity"
+      ],
+      "resources": {
+        "memory": "4g",
+        "cpus": 2
+      }
+    },
+    "godot-td": {
+      "image": "godot-td-dev:latest",
+      "allowedExecutables": [
+        "godot",
+        "python3",
+        "git"
+      ],
+      "mounts": [
+        {
+          "sourceFromShared": "hostWorkspaceRoot",
+          "target": "/workspaces",
+          "readOnly": false
+        }
+      ],
+      "command": [
+        "sleep",
+        "infinity"
+      ],
+      "resources": {
+        "memory": "8g",
+        "cpus": 4
+      }
+    }
+  }
+}
