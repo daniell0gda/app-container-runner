@@ -8,7 +8,7 @@ TOKEN="${RUNNER_TOKEN:-}"
 DOCKER_SOCKET="${DOCKER_SOCKET:-/var/run/docker.sock}"
 HERMES_CONTAINER="${HERMES_CONTAINER:-ix-hermes-agent-hermes-agent-1}"
 NETWORK_NAME="${NETWORK_NAME:-}"
-WORKSPACE_ROOT="${WORKSPACE_ROOT:-/mnt/nas_ssd/quick_access_for_pc/hermes/workspaces}"
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-/mnt/nas_ssd/quick_access_for_pc/hermes/git-workspaces}"
 DOCKER_GID=$(stat -c '%g' "${DOCKER_SOCKET}")
 
 if [[ -z "${TOKEN}" || "${TOKEN}" == "change-me" ]]; then
@@ -24,6 +24,8 @@ fi
 if sudo docker ps -a --format '{{.Names}}' | grep -qx "${NAME}"; then
   sudo docker rm -f "${NAME}" >/dev/null
 fi
+
+sudo docker build -t "${IMAGE}" .
 
 sudo docker run -d \
   --name "${NAME}" \

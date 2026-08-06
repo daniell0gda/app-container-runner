@@ -160,23 +160,24 @@ function profileMounts(profile) {
   }
 
   return profile.mounts.map((mount) => {
-    if (
-      !mount ||
-      typeof mount.sourceFromShared !== "string" ||
-      !Object.hasOwn(shared, mount.sourceFromShared) ||
-      typeof shared[mount.sourceFromShared] !== "string" ||
-      !path.isAbsolute(shared[mount.sourceFromShared]) ||
-      typeof mount.target !== "string" ||
-      !path.isAbsolute(mount.target)
-    ) {
+    if (!mount || typeof mount.target !== "string" || !path.isAbsolute(mount.target)) {
+      throw Error("profile mounts must define an absolute target");
+    }
+
+    let source;
+    if (typeof mount.sourceFromShared === "string") {
+      source = shared[mount.sourceFromShared];
+    } else if (typeof mount.sourceFromProfile === "string") {
+      source = profile[mount.sourceFromProfile];
+    }
+
+    if (typeof source !== "string" || !path.isAbsolute(source)) {
       throw Error(
-        "profile mounts must reference an absolute shared source and target"
+        "profile mounts must reference an absolute shared or profile source"
       );
     }
 
-    return `${shared[mount.sourceFromShared]}:${mount.target}${
-      mount.readOnly ? ":ro" : ":rw"
-    }`;
+    return `${source}:${mount.target}${mount.readOnly ? ":ro" : ":rw"}`;
   });
 }
 
@@ -269,6 +270,11 @@ async function executeCommand(worker, workingDirectory, cmd) {
   const exec = await container.exec({
     Cmd: cmd,
     WorkingDir: workingDirectory,
+    Env: [
+      "GIT_CONFIG_COUNT=1",
+      "GIT_CONFIG_KEY_0=safe.directory",
+      `GIT_CONFIG_VALUE_0=${workingDirectory}`
+    ],
     AttachStdout: true,
     AttachStderr: true,
     Tty: false

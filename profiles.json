@@ -1,13 +1,14 @@
 {
   "shared": {
-    "hostWorkspaceRoot": "/mnt/nas_ssd/quick_access_for_pc/hermes/workspaces",
-    "hermesWorkspaceRoot": "/workspace/workspaces",
+    "hostWorkspaceRoot": "/mnt/nas_ssd/quick_access_for_pc/hermes/git-workspaces",
+    "hermesWorkspaceRoot": "/workspace/git-workspaces",
     "defaultWorkerWorkspaceRoot": "/workspaces",
     "managedLabel": "ai.runner.managed",
     "managedLabelValue": "true"
   },
   "profiles": {
     "piwotworki": {
+      "hostRepoRoot": "/mnt/nas_ssd/quick_access_for_pc/hermes/piwotworki",
       "image": "piwotworki-dev:latest",
       "allowedExecutables": [
         "npm",
@@ -19,7 +20,7 @@
       "mounts": [
         {
           "sourceFromShared": "hostWorkspaceRoot",
-          "target": "/workspaces",
+          "target": "/workspace/piwotworki",
           "readOnly": false
         }
       ],
@@ -36,6 +37,7 @@
       }
     },
     "godot-td": {
+      "hostRepoRoot": "/mnt/nas_ssd/quick_access_for_pc/hermes/poke-defense-godot",
       "image": "godot-td-dev:latest",
       "allowedExecutables": [
         "godot",
@@ -43,11 +45,17 @@
         "git"
       ],
       "mounts": [
-        {
-          "sourceFromShared": "hostWorkspaceRoot",
-          "target": "/workspaces",
-          "readOnly": false
-        }
+
+	  {
+	   "sourceFromShared": "hostWorkspaceRoot",
+           "target": "/workspaces",
+           "readOnly": false
+         },
+         {
+		"sourceFromProfile": "hostRepoRoot",
+		"target": "/workspace/poke-defense-godot",
+	    	"readOnly": false
+	  }
       ],
       "command": [
         "sleep",

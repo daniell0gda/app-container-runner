@@ -11,7 +11,7 @@ The profile file has one `shared` section:
 - `defaultWorkerWorkspaceRoot`: default path where workers see the dataset.
 - `managedLabel` and `managedLabelValue`: ownership label used for worker discovery and lifecycle operations.
 
-A profile mount refers to a shared path by key, for example `sourceFromShared: "hostWorkspaceRoot"`. The runner resolves that to the host path before calling Docker. Profiles do not duplicate these shared paths.
+A profile mount may refer to a shared path by key, for example `sourceFromShared: "hostWorkspaceRoot"`, or to a path owned by the selected profile, for example `sourceFromProfile: "hostRepoRoot"`. The runner resolves the selected source to the host path before calling Docker.
 
 ## Build/run
 
