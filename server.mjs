@@ -16,6 +16,9 @@ const maxOutputBytes = Number.parseInt(
   10
 );
 const profilesFile = process.env.PROFILES_FILE || "/app/profiles.json";
+const artifactMaxBytes = Number.parseInt(process.env.ARTIFACT_MAX_BYTES || "52428800", 10);
+const artifactRoot = process.env.ARTIFACT_ROOT || null;
+const allowedArtifactExtensions = new Set([".json", ".jpg", ".jpeg", ".log", ".png", ".txt", ".webm"]);
 const workspacePattern =
   /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)+$/;
 const shellWrappers = new Set(["sh", "bash", "dash", "zsh"]);
@@ -72,6 +75,28 @@ function resolveWorkspace(profile, identifier) {
   }
 
   return { id: identifier, path: resolved };
+}
+
+async function resolveArtifactPath(profile, identifier, artifact) {
+  if (typeof artifact !== "string" || artifact.length === 0 || path.isAbsolute(artifact) || artifact.includes("\\0")) {
+    throw Error("artifact path must be relative to the workspace");
+  }
+  const workspace = resolveWorkspace(profile, identifier);
+  const root = path.resolve(artifactRoot || shared.hermesWorkspaceRoot);
+  const workspacePath = path.resolve(root, identifier);
+  const resolved = path.resolve(workspacePath, artifact);
+  const relative = path.relative(workspacePath, resolved);
+  const extension = path.extname(resolved).toLowerCase();
+  if (!relative || relative.startsWith(".." + path.sep) || path.isAbsolute(relative) || !allowedArtifactExtensions.has(extension)) {
+    throw Error("artifact path is outside the workspace or has an unsupported type");
+  }
+  const realWorkspace = await fs.realpath(workspacePath);
+  const realPath = await fs.realpath(resolved);
+  const realRelative = path.relative(realWorkspace, realPath);
+  if (!realRelative || realRelative.startsWith(".." + path.sep) || path.isAbsolute(realRelative)) {
+    throw Error("artifact path is outside the workspace");
+  }
+  return { workspace, path: realPath };
 }
 
 function workerName(project, identifier) {
@@ -402,6 +427,20 @@ app.post("/run", async (req, res) => {
       requestError.message.startsWith("command timed out") ? 504 : 400,
       requestError.message
     );
+  }
+});
+
+app.get("/artifacts", async (req, res) => {
+  try {
+    const { project, workspace: identifier, path: artifact } = req.query;
+    const profile = getProfile(project);
+    const resolved = await resolveArtifactPath(profile, identifier, artifact);
+    const stat = await fs.stat(resolved.path);
+    if (!stat.isFile()) throw Error("artifact is not a file");
+    if (stat.size > artifactMaxBytes) throw Error(`artifact exceeds the ${artifactMaxBytes}-byte limit`);
+    return res.sendFile(resolved.path);
+  } catch (requestError) {
+    return jsonError(res, 404, requestError.message);
   }
 });
 

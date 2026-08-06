@@ -20,9 +20,12 @@ docker build -t profile-worker-runner:local runner
 docker run --rm --name profile-worker-runner \
   -p 127.0.0.1:8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock:rw \
+  -v /mnt/nas_ssd/quick_access_for_pc/hermes/workspaces:/workspace/workspaces:ro \
   -v /path/to/profiles.json:/app/profiles.json:ro \
   -e RUNNER_TOKEN='TrueNAS-secret' profile-worker-runner:local
 ```
+
+`run_runner.sh` starts the container first, then runs `docker inspect ix-hermes-agent-hermes-agent-1 --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}'`, assigns the first network name to `NETWORK_NAME`, and executes `docker network connect "$NETWORK_NAME" profile-worker-runner`.
 
 Only the runner gets the Docker socket. Profile mount sources are host paths interpreted by the TrueNAS Docker engine. Build approved local images with `scripts/build-local-images.sh`; the runner inspects them and never pulls remote images.
 
@@ -35,10 +38,14 @@ curl -X POST http://127.0.0.1:8080/workers/ensure -H "Authorization: Bearer $RUN
 curl -X POST http://127.0.0.1:8080/run -H "Authorization: Bearer $RUNNER_TOKEN" -H 'Content-Type: application/json' -d '{"project":"piwotworki","workspace":"issue-182/piwotworki","cmd":["npm","run","build"]}'
 curl -X POST http://127.0.0.1:8080/workers/release -H "Authorization: Bearer $RUNNER_TOKEN" -H 'Content-Type: application/json' -d '{"project":"piwotworki","workspace":"issue-182/piwotworki","remove":true}'
 curl -H "Authorization: Bearer $RUNNER_TOKEN" http://127.0.0.1:8080/workers
+```bash
+curl -G -H "Authorization: Bearer ***" --data-urlencode "project=piwotworki" --data-urlencode "workspace=issue-182/piwotworki" --data-urlencode "path=.gen/harness/visual_checkpoints/shots/surface_wave_1.png" http://127.0.0.1:8080/artifacts --output surface_wave_1.png
 ```
 
 The runner resolves `issue-182/piwotworki` as `/workspaces/issue-182/piwotworki` inside the worker. With the example shared settings, that corresponds to `/mnt/nas_ssd/quick_access_for_pc/hermes/workspaces/issue-182/piwotworki` on the host and `/workspace/workspaces/issue-182/piwotworki` in Hermes.
 
+`/artifacts` downloads only workspace-relative files from the Hermes-visible root, with traversal, extension, file-type, and size-limit checks. The runner container must mount the workspace dataset at `/workspace/workspaces` (or configure `ARTIFACT_ROOT`).
+
 `/run` returns `success`, `exitCode`, `durationMs`, combined output, project, workspace, and worker. Commands must be non-empty token arrays, first token allowed by the profile, and never shell wrappers such as `bash -lc` or `sh -c`. Workspace must be relative and cannot contain traversal.
 
-Environment: `RUNNER_TOKEN`, `PROFILES_FILE=/app/profiles.json`, `RUNNER_TIMEOUT_MS=900000`, `MAX_OUTPUT_BYTES=1048576`, `PORT=8080`.
+Environment: `RUNNER_TOKEN`, `NETWORK_NAME` (optional), `HERMES_CONTAINER` (optional), `WORKSPACE_ROOT`, `PROFILES_FILE=/app/profiles.json`, `RUNNER_TIMEOUT_MS=900000`, `MAX_OUTPUT_BYTES=1048576`, `ARTIFACT_ROOT`, `ARTIFACT_MAX_BYTES`, `PORT=8080`.
