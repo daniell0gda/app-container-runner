@@ -271,6 +271,41 @@ function validateCommand(profile, cmd) {
   }
 }
 
+async function forceKillExec(container, execInstance) {
+  // Best-effort: kill the process started by docker exec so a timed-out
+  // godot/npm does not keep running and poison later commands.
+  try {
+    const info = await execInstance.inspect();
+    const pid = Number(info?.Pid || 0);
+    if (!Number.isFinite(pid) || pid <= 1) {
+      return { killed: false, reason: "no-pid" };
+    }
+    const killer = await container.exec({
+      // Bypass profile allowlist: this is an internal cleanup path.
+      Cmd: ["kill", "-9", String(pid)],
+      AttachStdout: true,
+      AttachStderr: true,
+      Tty: false
+    });
+    const killStream = await killer.start({ hijack: true, stdin: false });
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 2000);
+      killStream.once("end", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      killStream.once("error", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      killStream.on("data", () => {});
+    });
+    return { killed: true, pid };
+  } catch (killError) {
+    return { killed: false, reason: killError.message };
+  }
+}
+
 async function executeCommand(worker, workingDirectory, cmd) {
   const container = docker.getContainer(worker.containerId);
   const exec = await container.exec({
@@ -289,6 +324,8 @@ async function executeCommand(worker, workingDirectory, cmd) {
   let output = "";
   let outputBytes = 0;
   const started = Date.now();
+  let timedOut = false;
+  let killResult = null;
   const append = (chunk) => {
     if (outputBytes >= maxOutputBytes) return;
     const text = chunk.toString(
@@ -300,27 +337,54 @@ async function executeCommand(worker, workingDirectory, cmd) {
     outputBytes += Buffer.byteLength(text);
   };
 
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      stream.destroy();
-      reject(Error(`command timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    stream.once("end", () => {
-      clearTimeout(timer);
-      resolve();
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(async () => {
+        timedOut = true;
+        try {
+          killResult = await forceKillExec(container, exec);
+        } catch (killError) {
+          killResult = { killed: false, reason: killError.message };
+        }
+        try {
+          stream.destroy();
+        } catch {
+          // ignore
+        }
+        reject(Error(`command timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      stream.once("end", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      stream.once("error", (streamError) => {
+        clearTimeout(timer);
+        reject(streamError);
+      });
+      docker.modem.demuxStream(stream, { write: append }, { write: append });
     });
-    stream.once("error", (streamError) => {
-      clearTimeout(timer);
-      reject(streamError);
-    });
-    docker.modem.demuxStream(stream, { write: append }, { write: append });
-  });
+  } catch (runError) {
+    if (timedOut || String(runError.message || "").startsWith("command timed out")) {
+      const suffix = killResult?.killed
+        ? ` (killed pid ${killResult.pid})`
+        : killResult?.reason
+          ? ` (kill failed: ${killResult.reason})`
+          : "";
+      const err = Error(`command timed out after ${timeoutMs}ms${suffix}`);
+      err.timedOut = true;
+      err.partialOutput = output;
+      err.killResult = killResult;
+      throw err;
+    }
+    throw runError;
+  }
 
   const result = await exec.inspect();
   return {
     success: result.ExitCode === 0,
     exitCode: result.ExitCode,
     durationMs: Date.now() - started,
+    timedOut: false,
     output:
       outputBytes >= maxOutputBytes
         ? `${output}\n[output truncated]`
@@ -434,11 +498,16 @@ app.post("/run", async (req, res) => {
       worker: worker.container
     });
   } catch (requestError) {
-    return jsonError(
-      res,
-      requestError.message.startsWith("command timed out") ? 504 : 400,
-      requestError.message
-    );
+    const timedOut =
+      requestError.timedOut ||
+      String(requestError.message || "").startsWith("command timed out");
+    return res.status(timedOut ? 504 : 400).json({
+      success: false,
+      error: requestError.message,
+      timedOut: Boolean(timedOut),
+      output: requestError.partialOutput || undefined,
+      killResult: requestError.killResult || undefined
+    });
   }
 });
 
