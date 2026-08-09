@@ -15,7 +15,7 @@
         "npx",
         "node",
         "git",
-	"jest"
+        "jest"
       ],
       "mounts": [
         {
@@ -42,20 +42,20 @@
       "allowedExecutables": [
         "godot",
         "python3",
-        "git"
+        "git",
+        "pwsh"
       ],
       "mounts": [
-
-	  {
-	   "sourceFromShared": "hostWorkspaceRoot",
-           "target": "/workspaces",
-           "readOnly": false
-         },
-         {
-		"sourceFromProfile": "hostRepoRoot",
-		"target": "/workspace/poke-defense-godot",
-	    	"readOnly": false
-	  }
+        {
+          "sourceFromShared": "hostWorkspaceRoot",
+          "target": "/workspaces",
+          "readOnly": false
+        },
+        {
+          "sourceFromProfile": "hostRepoRoot",
+          "target": "/workspace/poke-defense-godot",
+          "readOnly": false
+        }
       ],
       "command": [
         "sleep",
@@ -64,7 +64,8 @@
       "resources": {
         "memory": "8g",
         "cpus": 4
-      }
+      },
+      "user": "950:950"
     }
   }
 }

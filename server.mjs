@@ -213,7 +213,7 @@ async function ensureWorker(project, identifier, profile) {
       throw Error(`approved local image is not available: ${profile.image}`);
     }
 
-    const container = await docker.createContainer({
+    const createOptions = {
       name: workerName(project, identifier),
       Image: profile.image,
       Cmd: profile.command,
@@ -230,7 +230,13 @@ async function ensureWorker(project, identifier, profile) {
         ...resourceOptions(profile.resources),
         Binds: profileMounts(profile)
       }
-    });
+    };
+    // Prefer profile.user (e.g. "950:950") so workers match Hermes UID/GID.
+    // Falls back to the image USER when omitted.
+    if (typeof profile.user === "string" && profile.user.trim()) {
+      createOptions.User = profile.user.trim();
+    }
+    const container = await docker.createContainer(createOptions);
 
     await container.start();
     info = await container.inspect();
