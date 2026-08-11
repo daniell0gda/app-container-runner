@@ -418,6 +418,31 @@ async function releaseWorker(project, identifier, remove) {
   };
 }
 
+async function clearTimedOutWorker(project, identifier, worker) {
+  const cleanup = {
+    attempted: true,
+    stopped: false,
+    removed: false,
+    error: null
+  };
+  try {
+    const container = docker.getContainer(worker.containerId);
+    const inspection = await container.inspect();
+    if (inspection.State.Running) {
+      await container.stop({ t: 10 });
+      cleanup.stopped = true;
+    }
+    await container.remove({ force: true });
+    cleanup.removed = true;
+  } catch (cleanupError) {
+    cleanup.error = cleanupError.message;
+    console.error(
+      `failed to clear timed-out worker ${project}/${identifier}: ${cleanupError.message}`
+    );
+  }
+  return cleanup;
+}
+
 async function loadProfiles() {
   const document = JSON.parse(await fs.readFile(profilesFile, "utf8"));
   if (!document?.shared || typeof document.shared !== "object") {
@@ -483,12 +508,16 @@ app.post("/workers/release", async (req, res) => {
 });
 
 app.post("/run", async (req, res) => {
+  let worker;
+  let project;
+  let identifier;
+  let cmd;
   try {
-    const { project, workspace: identifier, cmd } = req.body || {};
+    ({ project, workspace: identifier, cmd } = req.body || {});
     const profile = getProfile(project);
     const resolved = resolveWorkspace(profile, identifier);
     validateCommand(profile, cmd);
-    const worker = await ensureWorker(project, identifier, profile);
+    worker = await ensureWorker(project, identifier, profile);
     const result = await executeCommand(worker, resolved.path, cmd);
     return res.status(result.success ? 200 : 422).json({
       success: result.success,
@@ -501,12 +530,16 @@ app.post("/run", async (req, res) => {
     const timedOut =
       requestError.timedOut ||
       String(requestError.message || "").startsWith("command timed out");
+    const cleanup = timedOut && worker
+      ? await clearTimedOutWorker(project, identifier, worker)
+      : undefined;
     return res.status(timedOut ? 504 : 400).json({
       success: false,
       error: requestError.message,
       timedOut: Boolean(timedOut),
       output: requestError.partialOutput || undefined,
-      killResult: requestError.killResult || undefined
+      killResult: requestError.killResult || undefined,
+      cleanup
     });
   }
 });
