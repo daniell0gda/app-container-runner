@@ -2,6 +2,8 @@
 
 Hermes and the runner are long-lived. Hermes has no Docker socket and sends only an approved `project`, relative `workspace`, and tokenized `cmd` array. The runner owns profiles, creates one disposable worker per project/workspace, and uses only pre-existing local image tags.
 
+A profile JSON key may list several names, comma-separated, for example `"godot-td,tower-defense"`. Each name resolves to the same profile. Names are trimmed; empty or duplicate names are rejected at startup.
+
 ## Shared path configuration
 
 The profile file has one `shared` section:

@@ -40,6 +40,30 @@ function isAuthorized(req) {
   );
 }
 
+function profileAliases(key) {
+  return String(key)
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+function indexProfiles(rawProfiles) {
+  const indexed = {};
+  for (const [key, profile] of Object.entries(rawProfiles)) {
+    const aliases = profileAliases(key);
+    if (aliases.length === 0) {
+      throw Error("profile key must contain at least one name");
+    }
+    for (const alias of aliases) {
+      if (Object.hasOwn(indexed, alias)) {
+        throw Error(`duplicate profile key: ${alias}`);
+      }
+      indexed[alias] = profile;
+    }
+  }
+  return indexed;
+}
+
 function getProfile(project) {
   if (typeof project !== "string" || !Object.hasOwn(profiles, project)) {
     throw Error("project must be an approved profile key");
@@ -461,7 +485,7 @@ async function loadProfiles() {
     throw Error("profiles file must contain profiles");
   }
   shared = document.shared;
-  profiles = document.profiles;
+  profiles = indexProfiles(document.profiles);
 }
 
 app.use(express.json({ limit: "32kb" }));

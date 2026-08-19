@@ -34,7 +34,7 @@
         "cpus": 2
       }
     },
-    "godot-td": {
+    "godot-td,tower-defense,poke-defense-godot": {
       "image": "godot-td-dev:latest",
       "allowedExecutables": [
         "godot",
