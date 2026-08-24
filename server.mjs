@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import express from "express";
 import Docker from "dockerode";
+import { workerMatchesIssueRelease } from "./worker-match.mjs";
 
 const app = express();
 const docker = new Docker({
@@ -153,6 +154,28 @@ async function listManagedWorkers(project, identifier) {
     (container) =>
       container.Labels?.[shared.managedLabel] === shared.managedLabelValue
   );
+}
+
+async function listAllManagedWorkers() {
+  const containers = await docker.listContainers({
+    all: true,
+    filters: {
+      label: [`${shared.managedLabel}=${shared.managedLabelValue}`]
+    }
+  });
+  return containers.filter(
+    (container) =>
+      container.Labels?.[shared.managedLabel] === shared.managedLabelValue
+  );
+}
+
+function profileAliasesFor(project) {
+  const target = profiles[project];
+  return Object.keys(profiles).filter((alias) => profiles[alias] === target);
+}
+
+function containerDisplayName(info) {
+  return info.Names?.[0]?.replace(/^\//, "") || info.Id;
 }
 
 function parseMemory(value) {
@@ -417,28 +440,58 @@ async function executeCommand(worker, workingDirectory, cmd) {
 }
 
 async function releaseWorker(project, identifier, remove) {
-  const found = await listManagedWorkers(project, identifier);
+  const allowedProjects = profileAliasesFor(project);
+  const knownProjects = Object.keys(profiles);
+  const found = (await listAllManagedWorkers()).filter((container) =>
+    workerMatchesIssueRelease({
+      workspaceLabel: container.Labels?.["ai.runner.workspace"],
+      containerName: containerDisplayName(container),
+      projectLabel: container.Labels?.["ai.runner.project"],
+      requestedWorkspace: identifier,
+      allowedProjects,
+      knownProjects
+    })
+  );
   if (found.length === 0) {
     return {
       project,
       workspace: identifier,
       status: "not_found",
-      removed: false
+      removed: false,
+      containers: []
     };
   }
 
-  const info = found[0];
-  const container = docker.getContainer(info.Id);
-  const inspection = await container.inspect();
-  if (inspection.State.Running) await container.stop({ t: 10 });
-  if (remove) await container.remove();
+  const containers = [];
+  const errors = [];
+  for (const info of found) {
+    const name = containerDisplayName(info);
+    try {
+      const container = docker.getContainer(info.Id);
+      const inspection = await container.inspect();
+      if (inspection.State.Running) await container.stop({ t: 10 });
+      if (remove) await container.remove();
+      containers.push(name);
+    } catch (releaseError) {
+      errors.push({ container: name, error: releaseError.message });
+    }
+  }
+
+  if (containers.length === 0) {
+    throw Error(
+      `failed to release workers: ${errors.map((item) => item.error).join("; ")}`
+    );
+  }
 
   return {
     project,
     workspace: identifier,
     status: remove ? "removed" : "stopped",
-    container: info.Names?.[0]?.replace(/^\//, "") || info.Id,
-    removed: remove
+    container: containers[0],
+    containers,
+    count: containers.length,
+    removed: remove,
+    ...(errors.length > 0 ? { errors } : {})
   };
 }
 
