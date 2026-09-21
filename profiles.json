@@ -4,7 +4,10 @@
     "hermesWorkspaceRoot": "/opt/workspace/git-workspaces",
     "defaultWorkerWorkspaceRoot": "/workspaces",
     "managedLabel": "ai.runner.managed",
-    "managedLabelValue": "true"
+    "managedLabelValue": "true",
+    "allowedImages": [
+      "nexus.pdtec.lan:5500/linux-nodejs:lts"
+    ]
   },
   "profiles": {
     "simple-ng-proj": {

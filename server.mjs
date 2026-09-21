@@ -83,7 +83,7 @@ function resolveWorkspace(profile, identifier) {
     identifier.includes("..")
   ) {
     throw Error(
-      "workspace must be a relative path such as issue-182/piwotworki"
+      "workspace must be a relative path such as <project>/issue-<slug>"
     );
   }
 
@@ -237,32 +237,84 @@ function resourceOptions(resources = {}) {
   return HostConfig;
 }
 
-function workerResult(info, profile, project, identifier) {
+function workerResult(info, project, identifier, image) {
   return {
     container: info.Name?.replace(/^\//, "") || info.Id,
     containerId: info.Id,
     project,
     workspace: identifier,
-    image: profile.image,
+    image,
     status: info.State || info.Status || "unknown"
   };
 }
 
-async function ensureWorker(project, identifier, profile) {
+function resolveWorkerImage(profile, requested) {
+  const candidate =
+    typeof requested === "string" && requested.trim()
+      ? requested.trim()
+      : profile.image;
+  if (typeof candidate !== "string" || !candidate.trim()) {
+    throw Error(
+      "image is required (request body `image` or profile.image fallback)"
+    );
+  }
+  const image = candidate.trim();
+  const allow = [
+    ...(Array.isArray(shared.allowedImages) ? shared.allowedImages : []),
+    ...(Array.isArray(profile.allowedImages) ? profile.allowedImages : [])
+  ]
+    .filter((value) => typeof value === "string" && value.trim())
+    .map((value) => value.trim());
+  // Allowlist is optional. When configured, request/profile image must be listed
+  // (profile.image is always treated as allowed for back-compat).
+  if (allow.length > 0 && !allow.includes(image) && image !== profile.image) {
+    throw Error(`image is not on the allowlist: ${image}`);
+  }
+  return image;
+}
+
+async function assertLocalImage(image) {
+  try {
+    await docker.getImage(image).inspect();
+  } catch {
+    throw Error(`approved local image is not available: ${image}`);
+  }
+}
+
+function containerImageRef(info) {
+  return info?.Config?.Image || info?.Image || "";
+}
+
+async function ensureWorker(project, identifier, profile, requestedImage) {
+  const image = resolveWorkerImage(profile, requestedImage);
+  await assertLocalImage(image);
+
   const found = await listManagedWorkers(project, identifier);
   let info = found[0];
 
-  if (!info) {
-    const image = docker.getImage(profile.image);
-    try {
-      await image.inspect();
-    } catch {
-      throw Error(`approved local image is not available: ${profile.image}`);
+  if (info) {
+    const container = docker.getContainer(info.Id);
+    info = await container.inspect();
+    const current = containerImageRef(info);
+    if (current && current !== image) {
+      // Per-issue image from .ai/config.yaml changed: recreate the worker.
+      try {
+        if (info.State?.Running) await container.stop({ t: 10 });
+      } catch {
+        /* best-effort */
+      }
+      await container.remove({ force: true });
+      info = undefined;
+    } else if (!info.State.Running) {
+      await container.start();
+      info = await container.inspect();
     }
+  }
 
+  if (!info) {
     const createOptions = {
       name: workerName(project, identifier),
-      Image: profile.image,
+      Image: image,
       Cmd: profile.command,
       Entrypoint: profile.entrypoint,
       Env: Object.entries(profile.env || {}).map(
@@ -271,7 +323,8 @@ async function ensureWorker(project, identifier, profile) {
       Labels: {
         [shared.managedLabel]: shared.managedLabelValue,
         "ai.runner.project": project,
-        "ai.runner.workspace": identifier
+        "ai.runner.workspace": identifier,
+        "ai.runner.image": image
       },
       HostConfig: {
         ...resourceOptions(profile.resources),
@@ -287,16 +340,9 @@ async function ensureWorker(project, identifier, profile) {
 
     await container.start();
     info = await container.inspect();
-  } else {
-    const container = docker.getContainer(info.Id);
-    info = await container.inspect();
-    if (!info.State.Running) {
-      await container.start();
-      info = await container.inspect();
-    }
   }
 
-  return workerResult(info, profile, project, identifier);
+  return workerResult(info, project, identifier, image);
 }
 
 function validateCommand(profile, cmd) {
@@ -553,12 +599,12 @@ app.use((req, res, next) =>
 
 app.post("/workers/ensure", async (req, res) => {
   try {
-    const { project, workspace: identifier } = req.body || {};
+    const { project, workspace: identifier, image } = req.body || {};
     const profile = getProfile(project);
     resolveWorkspace(profile, identifier);
     return res.json({
       success: true,
-      ...(await ensureWorker(project, identifier, profile))
+      ...(await ensureWorker(project, identifier, profile, image))
     });
   } catch (requestError) {
     return jsonError(res, 400, requestError.message);
@@ -589,12 +635,13 @@ app.post("/run", async (req, res) => {
   let project;
   let identifier;
   let cmd;
+  let image;
   try {
-    ({ project, workspace: identifier, cmd } = req.body || {});
+    ({ project, workspace: identifier, cmd, image } = req.body || {});
     const profile = getProfile(project);
     const resolved = resolveWorkspace(profile, identifier);
     validateCommand(profile, cmd);
-    worker = await ensureWorker(project, identifier, profile);
+    worker = await ensureWorker(project, identifier, profile, image);
     const result = await executeCommand(worker, resolved.path, cmd);
     return res.status(result.success ? 200 : 422).json({
       success: result.success,
