@@ -1,5 +1,6 @@
-FROM node:24.18.0-bookworm-slim
+FROM nexus.pdtec.lan:5500/linux-nodejs:lts
 WORKDIR /app
+COPY --chown=node:node .npmrc ./
 COPY --chown=node:node package.json ./
 RUN npm install --omit=dev && npm cache clean --force
 
