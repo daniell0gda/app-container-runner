@@ -1,6 +1,6 @@
 # Profile-based worker runner
 
-Hermes and the runner are long-lived. Hermes has no Docker socket. Hermes sends only approved request fields: `project`, relative `workspace`, optional/required `image` (from the worktree `.ai/config.yaml`), and a tokenized `cmd` array. The runner owns profiles, creates one disposable worker per project/workspace, and uses only **pre-existing local** image tags (never pulls).
+Hermes and the runner are long-lived. Hermes has no Docker socket. Hermes sends only approved request fields: `project`, relative `workspace`, optional/required `image` (from the worktree `.agents/hermes_config.yaml`), and a tokenized `cmd` array. The runner owns profiles, creates one disposable worker per project/workspace, and uses only **pre-existing local** image tags (never pulls).
 
 `/workers/release` stops or removes every managed worker for that issue, not just the exact `project`+`workspace` pair. A close of `godot-td` / `godot-td/issue-window-modals-skip-wood-frame` also clears leftover alias containers such as `ai-worker-poke-defense-godot-poke-defense-godot-issue-window-modals-skip-wood-frame-*`. Matching uses the exact `issue-<slug>` tail (or container name `ai-worker-*-issue-<slug>-<12hex>`). Other known profile keys are left alone.
 
@@ -57,7 +57,7 @@ Outdated examples such as `issue-182/piwotworki` (slug/project reversed) are **n
 Per-issue worker image source of truth is the worktree file:
 
 ```text
-<worktree>/.ai/config.yaml   # YAML key: image
+<worktree>/.agents/hermes_config.yaml   # YAML key: image
 ```
 
 `caiq-start-issue` requires that file and returns the `image` string. Callers must pass it as HTTP body field **`image`** on `/workers/ensure` and `/run`.
@@ -66,7 +66,7 @@ Policy:
 
 1. **Local-tags-only**: the runner `docker inspect`s the tag and never pulls remote images.
 2. **Optional allowlist**: if `shared.allowedImages` and/or `profile.allowedImages` is non-empty, the requested image must appear there (or equal `profile.image`).
-3. **Fallback**: if request `image` is omitted/empty, the runner uses `profile.image` (legacy). Prefer always sending `.ai/config.yaml` `image` for issue worktrees.
+3. **Fallback**: if request `image` is omitted/empty, the runner uses `profile.image` (legacy). Prefer always sending `.agents/hermes_config.yaml` `image` for issue worktrees.
 4. If an existing managed worker for that project/workspace was created with a **different** image, ensure recreates it.
 
 Profile `image` remains the default/fallback and an allowlist member; it is no longer the only story for per-issue execution once request `image` is supplied.
@@ -94,7 +94,7 @@ Only the runner gets the Docker socket. Profile mount sources are host paths int
 All endpoints except `/health` require `Authorization: Bearer $RUNNER_TOKEN`.
 
 ```bash
-# ensure — relative workspace + image from .ai/config.yaml
+# ensure — relative workspace + image from .agents/hermes_config.yaml
 curl -X POST http://127.0.0.1:8080/workers/ensure \
   -H "Authorization: Bearer $RUNNER_TOKEN" -H 'Content-Type: application/json' \
   -d '{"project":"simple-ng-proj","workspace":"simple-ng-proj/issue-fix-login-timeout","image":"nexus.pdtec.lan:5500/linux-nodejs:lts"}'

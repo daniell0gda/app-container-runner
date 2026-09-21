@@ -6,7 +6,7 @@
     "managedLabel": "ai.runner.managed",
     "managedLabelValue": "true",
     "_comment_roots": "hostWorkspaceRoot=Docker host bind; hermesWorkspaceRoot=Hermes view; defaultWorkerWorkspaceRoot=worker view (/workspaces). Request workspace is relative under that dataset, preferred <project>/issue-<slug>.",
-    "_comment_images": "Optional shared.allowedImages allowlist. Request body image (from worktree .ai/config.yaml) is preferred on ensure/run; local-tags-only (never pull). profile.image is fallback.",
+    "_comment_images": "Optional shared.allowedImages allowlist. Request body image (from worktree .agents/hermes_config.yaml) is preferred on ensure/run; local-tags-only (never pull). profile.image is fallback.",
     "allowedImages": [
       "nexus.pdtec.lan:5500/linux-nodejs:lts"
     ]
@@ -38,7 +38,7 @@
         "memory": "4g",
         "cpus": 2
       },
-      "_comment_image": "Fallback when request omits image. Per-issue SoT is <worktree>/.ai/config.yaml image."
+      "_comment_image": "Fallback when request omits image. Per-issue SoT is <worktree>/.agents/hermes_config.yaml image."
     }
   }
 }
