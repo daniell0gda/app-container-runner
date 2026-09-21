@@ -1,14 +1,14 @@
 {
   "shared": {
-    "hostWorkspaceRoot": "/mnt/nas_ssd/quick_access_for_pc/hermes/workspaces",
-    "hermesWorkspaceRoot": "/workspace/workspaces",
+    "hostWorkspaceRoot": "/mnt/p/hermes/agent/workspace/git-workspaces",
+    "hermesWorkspaceRoot": "/opt/workspace/git-workspaces",
     "defaultWorkerWorkspaceRoot": "/workspaces",
     "managedLabel": "ai.runner.managed",
     "managedLabelValue": "true"
   },
   "profiles": {
-    "piwotworki": {
-      "image": "piwotworki-dev:latest",
+    "simple-ng-proj": {
+      "image": "nexus.pdtec.lan:5500/linux-nodejs:lts",
       "allowedExecutables": [
         "npm",
         "npx",
@@ -32,29 +32,6 @@
       "resources": {
         "memory": "4g",
         "cpus": 2
-      }
-    },
-    "godot-td,tower-defense,poke-defense-godot": {
-      "image": "godot-td-dev:latest",
-      "allowedExecutables": [
-        "godot",
-        "python3",
-        "git"
-      ],
-      "mounts": [
-        {
-          "sourceFromShared": "hostWorkspaceRoot",
-          "target": "/workspaces",
-          "readOnly": false
-        }
-      ],
-      "command": [
-        "sleep",
-        "infinity"
-      ],
-      "resources": {
-        "memory": "8g",
-        "cpus": 4
       }
     }
   }
