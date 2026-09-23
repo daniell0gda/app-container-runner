@@ -1,8 +1,8 @@
 {
   "shared": {
-    "hostWorkspaceRoot": "/mnt/p/hermes/agent/workspace/git-workspaces",
+    "hostWorkspaceRoot": "/mnt/p/hermes/agent/workspace",
     "hermesWorkspaceRoot": "/opt/workspace/git-workspaces",
-    "defaultWorkerWorkspaceRoot": "/workspaces",
+    "defaultWorkerWorkspaceRoot": "/opt/workspace/git-workspaces",
     "managedLabel": "ai.runner.managed",
     "managedLabelValue": "true",
     "allowedImages": [
@@ -21,7 +21,7 @@
       "mounts": [
         {
           "sourceFromShared": "hostWorkspaceRoot",
-          "target": "/workspaces",
+          "target": "/opt/workspace",
           "readOnly": false
         }
       ],
