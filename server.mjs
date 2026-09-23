@@ -276,8 +276,17 @@ function resolveWorkerImage(profile, requested) {
 async function assertLocalImage(image) {
   try {
     await docker.getImage(image).inspect();
-  } catch {
-    throw Error(`approved local image is not available: ${image}`);
+  } catch (error) {
+    // Only a 404 means the image really is absent. Every other failure is the
+    // daemon being unreachable — most often EACCES on /var/run/docker.sock when
+    // the container is not in the socket's group. Reporting those as a missing
+    // image sends the caller off pulling an image that is already there.
+    if (error?.statusCode === 404) {
+      throw Error(`approved local image is not available: ${image}`);
+    }
+    throw Error(
+      `cannot reach the Docker daemon to inspect ${image}: ${error?.message || error}`
+    );
   }
 }
 
