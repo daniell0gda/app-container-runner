@@ -27,7 +27,8 @@
       ],
       "env": {
         "NODE_ENV": "development",
-        "npm_config_cache": "/opt/workspace/.npm-cache"
+        "npm_config_cache": "/opt/workspace/.npm-cache",
+        "NODE_OPTIONS": "--max_old_space_size=3072"
       },
       "command": [
         "sleep",
