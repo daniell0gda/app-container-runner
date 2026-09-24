@@ -27,15 +27,14 @@
       ],
       "env": {
         "NODE_ENV": "development",
-        "npm_config_cache": "/opt/workspace/.npm-cache",
-        "NODE_OPTIONS": "--max_old_space_size=3072"
+        "npm_config_cache": "/opt/workspace/.npm-cache"
       },
       "command": [
         "sleep",
         "infinity"
       ],
       "resources": {
-        "memory": "4g",
+        "memory": "10g",
         "cpus": 2
       }
     }
