@@ -26,7 +26,8 @@
         }
       ],
       "env": {
-        "NODE_ENV": "development"
+        "NODE_ENV": "development",
+        "npm_config_cache": "/opt/workspace/.npm-cache"
       },
       "command": [
         "sleep",
