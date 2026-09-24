@@ -17,6 +17,11 @@ const maxOutputBytes = Number.parseInt(
   10
 );
 const profilesFile = process.env.PROFILES_FILE || "/app/profiles.json";
+// Where the workers' /opt/workspace comes from, when it is not the host path in
+// profiles.json. On a Windows host that path is a 9p drvfs share and creates
+// files at ~95/s against ~4600/s on the VM's own disk, so the local stack backs
+// the workspace with a Docker volume instead and names it here.
+const hostWorkspaceRoot = process.env.HOST_WORKSPACE_ROOT || null;
 const artifactMaxBytes = Number.parseInt(process.env.ARTIFACT_MAX_BYTES || "52428800", 10);
 const artifactRoot = process.env.ARTIFACT_ROOT || null;
 const allowedArtifactExtensions = new Set([".json", ".jpg", ".jpeg", ".log", ".png", ".txt", ".webm"]);
@@ -124,31 +129,38 @@ async function resolveArtifactPath(profile, identifier, artifact) {
   return { workspace, path: realPath };
 }
 
-function workerName(project, identifier) {
+// The image is part of the identity, not just a property: a repository whose
+// client and server need different toolchains asks for both within one
+// workspace, and without this they would be the same worker — each request
+// evicting the other's container and rebuilding it. Workers for different images
+// coexist instead; release still takes them all, because it does not filter by
+// image.
+function workerName(project, identifier, image) {
   const readable = `${project}-${identifier}`
     .replace(/[^A-Za-z0-9_.-]+/g, "-")
     .slice(0, 90);
   const suffix = crypto
     .createHash("sha256")
-    .update(`${project}:${identifier}`)
+    .update(`${project}:${identifier}:${image}`)
     .digest("hex")
     .slice(0, 12);
   return `ai-worker-${readable}-${suffix}`;
 }
 
-function managedLabelFilter(project, identifier) {
+function managedLabelFilter(project, identifier, image) {
   const labels = [
     `${shared.managedLabel}=${shared.managedLabelValue}`,
     `ai.runner.project=${project}`
   ];
   if (identifier) labels.push(`ai.runner.workspace=${identifier}`);
+  if (image) labels.push(`ai.runner.image=${image}`);
   return { label: labels };
 }
 
-async function listManagedWorkers(project, identifier) {
+async function listManagedWorkers(project, identifier, image) {
   const containers = await docker.listContainers({
     all: true,
-    filters: managedLabelFilter(project, identifier)
+    filters: managedLabelFilter(project, identifier, image)
   });
   return containers.filter(
     (container) =>
@@ -201,6 +213,17 @@ function parseMemory(value) {
   return Math.round(Number(match[1]) * units[match[2]]);
 }
 
+// Docker accepts either an absolute host path (a bind) or a volume name on the
+// left of a `Binds` entry, and tells them apart by the leading slash. So do we.
+// The name pattern admits no slash, which keeps a relative path such as `..`
+// from passing as a volume.
+function isMountSource(source) {
+  return (
+    typeof source === "string" &&
+    (path.isAbsolute(source) || /^[A-Za-z0-9][A-Za-z0-9_.-]+$/.test(source))
+  );
+}
+
 function profileMounts(profile) {
   if (!Array.isArray(profile.mounts) || profile.mounts.length === 0) {
     throw Error("profile must define mounts");
@@ -218,9 +241,10 @@ function profileMounts(profile) {
       source = profile[mount.sourceFromProfile];
     }
 
-    if (typeof source !== "string" || !path.isAbsolute(source)) {
+    if (!isMountSource(source)) {
       throw Error(
-        "profile mounts must reference an absolute shared or profile source"
+        "profile mounts must reference a shared or profile source that is an " +
+          "absolute host path or a Docker volume name"
       );
     }
 
@@ -268,7 +292,17 @@ function resolveWorkerImage(profile, requested) {
   // Allowlist is optional. When configured, request/profile image must be listed
   // (profile.image is always treated as allowed for back-compat).
   if (allow.length > 0 && !allow.includes(image) && image !== profile.image) {
-    throw Error(`image is not on the allowlist: ${image}`);
+    // Say where the image came from. A requested image is one the project asked
+    // for in its hermes_config.yaml, and the fix is to approve it here or correct
+    // it there — not, as has happened, for the agent to guess another tag.
+    const source =
+      image === candidate && requested
+        ? "the project's hermes_config.yaml requested"
+        : "profile.image is";
+    throw Error(
+      `${source} an image that is not on the allowlist: ${image}. ` +
+        `Approved: ${allow.join(", ")}`
+    );
   }
   return image;
 }
@@ -298,7 +332,7 @@ async function ensureWorker(project, identifier, profile, requestedImage) {
   const image = resolveWorkerImage(profile, requestedImage);
   await assertLocalImage(image);
 
-  const found = await listManagedWorkers(project, identifier);
+  const found = await listManagedWorkers(project, identifier, image);
   let info = found[0];
 
   if (info) {
@@ -322,7 +356,7 @@ async function ensureWorker(project, identifier, profile, requestedImage) {
 
   if (!info) {
     const createOptions = {
-      name: workerName(project, identifier),
+      name: workerName(project, identifier, image),
       Image: image,
       Cmd: profile.command,
       Entrypoint: profile.entrypoint,
@@ -580,6 +614,7 @@ async function loadProfiles() {
   if (!document?.shared || typeof document.shared !== "object") {
     throw Error("profiles file must contain a shared object");
   }
+  if (hostWorkspaceRoot) document.shared.hostWorkspaceRoot = hostWorkspaceRoot;
   if (
     typeof document.shared.hostWorkspaceRoot !== "string" ||
     typeof document.shared.hermesWorkspaceRoot !== "string" ||
