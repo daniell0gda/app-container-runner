@@ -1,12 +1,15 @@
 {
   "shared": {
-    "hostWorkspaceRoot": "/mnt/p/hermes/agent/workspace",
+    "hostWorkspaceRoot": "/home/ferens/hermes/workspace",
     "hermesWorkspaceRoot": "/opt/workspace/git-workspaces",
     "defaultWorkerWorkspaceRoot": "/opt/workspace/git-workspaces",
     "managedLabel": "ai.runner.managed",
     "managedLabelValue": "true",
     "allowedImages": [
-      "nexus.pdtec.lan:5500/linux-nodejs:lts"
+      "nexus.pdtec.lan:5500/linux-nodejs:lts",
+      "nexus.pdtec.lan:5500/linux-nodejs:24",
+      "nexus.pdtec.lan:5500/linux-nodejs-chromium:lts-snapshot-mr-79",
+      "nexus.pdtec.lan:5500/linux-cypress:15-snapshot-mr-79"
     ]
   },
   "profiles": {
@@ -33,6 +36,7 @@
         "sleep",
         "infinity"
       ],
+      "entrypoint": [],
       "resources": {
         "memory": "10g",
         "cpus": 2
