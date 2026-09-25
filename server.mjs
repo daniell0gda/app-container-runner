@@ -4,6 +4,7 @@ import path from "node:path";
 import express from "express";
 import Docker from "dockerode";
 import { workerMatchesIssueRelease } from "./worker-match.mjs";
+import { workerDnsOptions } from "./worker-dns.mjs";
 
 const app = express();
 const docker = new Docker({
@@ -24,6 +25,7 @@ const profilesFile = process.env.PROFILES_FILE || "/app/profiles.json";
 const hostWorkspaceRoot = process.env.HOST_WORKSPACE_ROOT || null;
 const artifactMaxBytes = Number.parseInt(process.env.ARTIFACT_MAX_BYTES || "52428800", 10);
 const artifactRoot = process.env.ARTIFACT_ROOT || null;
+const workerDns = workerDnsOptions(process.env);
 const allowedArtifactExtensions = new Set([".json", ".jpg", ".jpeg", ".log", ".png", ".txt", ".webm"]);
 const workspacePattern =
   /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)+$/;
@@ -371,6 +373,11 @@ async function ensureWorker(project, identifier, profile, requestedImage) {
       },
       HostConfig: {
         ...resourceOptions(profile.resources),
+        ...workerDns,
+        // docker-init as PID 1 passes SIGTERM on to the profile's command. As PID
+        // 1 itself, `sleep infinity` ignores it, so every stop sat out the full
+        // 10 s timeout before the kill.
+        Init: true,
         Binds: profileMounts(profile)
       }
     };
