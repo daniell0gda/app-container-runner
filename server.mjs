@@ -5,6 +5,7 @@ import express from "express";
 import Docker from "dockerode";
 import { workerMatchesIssueRelease } from "./worker-match.mjs";
 import { workerDnsOptions } from "./worker-dns.mjs";
+import { workerNetworkOptions } from "./worker-network.mjs";
 
 const app = express();
 const docker = new Docker({
@@ -374,6 +375,7 @@ async function ensureWorker(project, identifier, profile, requestedImage) {
       HostConfig: {
         ...resourceOptions(profile.resources),
         ...workerDns,
+        ...workerNetworkOptions(profile.network),
         // docker-init as PID 1 passes SIGTERM on to the profile's command. As PID
         // 1 itself, `sleep infinity` ignores it, so every stop sat out the full
         // 10 s timeout before the kill.
