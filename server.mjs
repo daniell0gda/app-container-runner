@@ -6,6 +6,7 @@ import Docker from "dockerode";
 import { workerMatchesIssueRelease } from "./worker-match.mjs";
 import { workerDnsOptions } from "./worker-dns.mjs";
 import { workerNetworkOptions } from "./worker-network.mjs";
+import { ensureLocalImage, imageAllowed } from "./worker-image.mjs";
 
 const app = express();
 const docker = new Docker({
@@ -292,9 +293,10 @@ function resolveWorkerImage(profile, requested) {
   ]
     .filter((value) => typeof value === "string" && value.trim())
     .map((value) => value.trim());
-  // Allowlist is optional. When configured, request/profile image must be listed
-  // (profile.image is always treated as allowed for back-compat).
-  if (allow.length > 0 && !allow.includes(image) && image !== profile.image) {
+  // Allowlist is optional. When configured, request/profile image must match an
+  // entry (profile.image is always treated as allowed for back-compat).
+  const approved = image === profile.image || imageAllowed(image, allow);
+  if (allow.length > 0 && !approved) {
     // Say where the image came from. A requested image is one the project asked
     // for in its hermes_config.yaml, and the fix is to approve it here or correct
     // it there — not, as has happened, for the agent to guess another tag.
@@ -307,24 +309,7 @@ function resolveWorkerImage(profile, requested) {
         `Approved: ${allow.join(", ")}`
     );
   }
-  return image;
-}
-
-async function assertLocalImage(image) {
-  try {
-    await docker.getImage(image).inspect();
-  } catch (error) {
-    // Only a 404 means the image really is absent. Every other failure is the
-    // daemon being unreachable — most often EACCES on /var/run/docker.sock when
-    // the container is not in the socket's group. Reporting those as a missing
-    // image sends the caller off pulling an image that is already there.
-    if (error?.statusCode === 404) {
-      throw Error(`approved local image is not available: ${image}`);
-    }
-    throw Error(
-      `cannot reach the Docker daemon to inspect ${image}: ${error?.message || error}`
-    );
-  }
+  return { image, approved };
 }
 
 function containerImageRef(info) {
@@ -332,8 +317,8 @@ function containerImageRef(info) {
 }
 
 async function ensureWorker(project, identifier, profile, requestedImage) {
-  const image = resolveWorkerImage(profile, requestedImage);
-  await assertLocalImage(image);
+  const { image, approved } = resolveWorkerImage(profile, requestedImage);
+  await ensureLocalImage(docker, image, { pullIfMissing: approved });
 
   const found = await listManagedWorkers(project, identifier, image);
   let info = found[0];

@@ -1,6 +1,6 @@
 # Profile-based worker runner
 
-Hermes and the runner are long-lived. Hermes has no Docker socket. Hermes sends only approved request fields: `project`, relative `workspace`, optional/required `image` (from worktree `.hermes/hermes_config.yaml`, else `.agents/...`), and a tokenized `cmd` array. The runner owns profiles, creates one disposable worker per project/workspace, and uses only **pre-existing local** image tags (never pulls).
+Hermes and the runner are long-lived. Hermes has no Docker socket. Hermes sends only approved request fields: `project`, relative `workspace`, optional/required `image` (from worktree `.hermes/hermes_config.yaml`, else `.agents/...`), and a tokenized `cmd` array. The runner owns profiles, creates one disposable worker per project/workspace, and pulls an image only when an operator approved it and the host lacks it.
 
 `/workers/release` stops or removes every managed worker for that issue, not just the exact `project`+`workspace` pair. A close of `godot-td` / `godot-td/issue-window-modals-skip-wood-frame` also clears leftover alias containers such as `ai-worker-poke-defense-godot-poke-defense-godot-issue-window-modals-skip-wood-frame-*`. Matching uses the exact `issue-<slug>` tail (or container name `ai-worker-*-issue-<slug>-<12hex>`). Other known profile keys are left alone.
 
@@ -14,7 +14,7 @@ The profile file has one `shared` section:
 - `hermesWorkspaceRoot`: path where Hermes sees the same dataset (container path, typically `/opt/workspace/git-workspaces`).
 - `defaultWorkerWorkspaceRoot`: default path where workers see the dataset (`/workspaces`).
 - `managedLabel` and `managedLabelValue`: ownership label used for worker discovery and lifecycle operations.
-- `allowedImages` (optional): shared allowlist of image refs. When non-empty (together with per-profile `allowedImages`), request `image` must be listed (profile `image` remains allowed for back-compat).
+- `allowedImages` (optional): shared allowlist of image refs or globs. When non-empty (together with per-profile `allowedImages`), request `image` must match an entry (profile `image` remains allowed for back-compat). In a glob, `*` stands for any run of characters and `?` for one, neither crossing a `/`: `nexus.pdtec.lan:5500/linux-*` approves every tag of every top-level `linux-*` repository on that registry, but not a nested path or another registry.
 
 A profile mount may refer to a shared path by key, for example `sourceFromShared: "hostWorkspaceRoot"`, or to a path owned by the selected profile, for example `sourceFromProfile: "hostRepoRoot"`. The runner resolves the selected source to the host path before calling Docker.
 
@@ -65,8 +65,8 @@ YAML key: `image`. `caiq-start-issue` requires one of these and returns the `ima
 
 Policy:
 
-1. **Local-tags-only**: the runner `docker inspect`s the tag and never pulls remote images.
-2. **Optional allowlist**: if `shared.allowedImages` and/or `profile.allowedImages` is non-empty, the requested image must appear there (or equal `profile.image`).
+1. **Pull only what is approved, only when missing**: the runner `docker inspect`s the image and pulls it when the host lacks it and it is `profile.image` or matches the allowlist. An image already on the host is never re-pulled, so a moved tag is not picked up until the local copy is removed. With no allowlist, a requested image must already be on the host.
+2. **Optional allowlist**: if `shared.allowedImages` and/or `profile.allowedImages` is non-empty, the requested image must match an entry there (or equal `profile.image`).
 3. **Fallback**: if request `image` is omitted/empty, the runner uses `profile.image` (legacy). Prefer always sending hermes_config `image` (`.hermes` then `.agents`) for issue worktrees.
 4. If an existing managed worker for that project/workspace was created with a **different** image, ensure recreates it.
 
@@ -88,7 +88,7 @@ docker run --rm --name profile-worker-runner \
 
 `run_runner.sh` starts the container first, then runs `docker inspect ix-hermes-agent-hermes-agent-1 --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}'`, assigns the first network name to `NETWORK_NAME`, and executes `docker network connect "$NETWORK_NAME" profile-worker-runner`.
 
-Only the runner gets the Docker socket. Profile mount sources are host paths interpreted by the Docker engine. Build approved local images ahead of time; the runner inspects them and never pulls remote images.
+Only the runner gets the Docker socket. Profile mount sources are host paths interpreted by the Docker engine. The Docker daemon does the pulling, so it needs to reach the registry and trust it; the runner passes no registry credentials. A pull happens inside the `/workers/ensure` or `/run` call that needs the image, so the first call for a large image can outlast a caller's own timeout — the pull still completes and the next call finds the image.
 
 ## API
 
