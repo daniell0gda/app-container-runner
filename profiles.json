@@ -30,9 +30,11 @@
           "readOnly": false
         }
       ],
+      "user": "1008:1008",
       "env": {
         "NODE_ENV": "development",
-        "npm_config_cache": "/opt/workspace/.npm-cache"
+        "npm_config_cache": "/opt/workspace/.npm-cache",
+        "HOME": "/tmp"
       },
       "command": [
         "sleep",
