@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ensureLocalImage, imageAllowed } from "./worker-image.mjs";
+import { approvedImages, ensureLocalImage, imageAllowed } from "./worker-image.mjs";
 
 const nodeLts = "nexus.pdtec.lan:5500/linux-nodejs:lts";
 
@@ -35,6 +35,25 @@ test("a question mark stands for exactly one character", () => {
 
 test("dots and other regex characters in an entry match literally", () => {
   assert.equal(imageAllowed("nexusXpdtecXlan:5500/linux-nodejs:lts", ["nexus.pdtec.lan:5500/*"]), false);
+});
+
+test("a profile's allowlist is the shared entries followed by its own", () => {
+  const shared = { allowedImages: [nodeLts, "nexus.pdtec.lan:5500/linux-dotnet-sdk-nodejs:*"] };
+  const profile = { allowedImages: ["nexus.pdtec.lan:5500/linux-cypress:15"] };
+  assert.deepEqual(approvedImages(shared, profile), [
+    nodeLts,
+    "nexus.pdtec.lan:5500/linux-dotnet-sdk-nodejs:*",
+    "nexus.pdtec.lan:5500/linux-cypress:15"
+  ]);
+});
+
+test("an allowlist drops blank and non-string entries and trims the rest", () => {
+  const shared = { allowedImages: [` ${nodeLts} `, "", "  ", 7, null] };
+  assert.deepEqual(approvedImages(shared, {}), [nodeLts]);
+});
+
+test("no allowlist anywhere is an empty list", () => {
+  assert.deepEqual(approvedImages({}, {}), []);
 });
 
 function fakeDocker({ present = false, inspectError, pullError, events = [], appearsAfterPull = true } = {}) {

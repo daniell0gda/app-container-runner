@@ -6,7 +6,7 @@ import Docker from "dockerode";
 import { workerMatchesIssueRelease } from "./worker-match.mjs";
 import { workerDnsOptions } from "./worker-dns.mjs";
 import { workerNetworkOptions } from "./worker-network.mjs";
-import { ensureLocalImage, imageAllowed } from "./worker-image.mjs";
+import { approvedImages, ensureLocalImage, imageAllowed } from "./worker-image.mjs";
 
 const app = express();
 const docker = new Docker({
@@ -287,12 +287,7 @@ function resolveWorkerImage(profile, requested) {
     );
   }
   const image = candidate.trim();
-  const allow = [
-    ...(Array.isArray(shared.allowedImages) ? shared.allowedImages : []),
-    ...(Array.isArray(profile.allowedImages) ? profile.allowedImages : [])
-  ]
-    .filter((value) => typeof value === "string" && value.trim())
-    .map((value) => value.trim());
+  const allow = approvedImages(shared, profile);
   // Allowlist is optional. When configured, request/profile image must match an
   // entry (profile.image is always treated as allowed for back-compat).
   const approved = image === profile.image || imageAllowed(image, allow);
@@ -715,6 +710,23 @@ app.get("/artifacts", async (req, res) => {
     if (!stat.isFile()) throw Error("artifact is not a file");
     if (stat.size > artifactMaxBytes) throw Error(`artifact exceeds the ${artifactMaxBytes}-byte limit`);
     return res.sendFile(resolved.path);
+  } catch (requestError) {
+    return jsonError(res, 404, requestError.message);
+  }
+});
+
+// What a project may run, as this process enforces it. profiles.json is read
+// once at startup, so the file on disk can already say something else.
+app.get("/profiles/:project", (req, res) => {
+  try {
+    const profile = getProfile(req.params.project);
+    return res.json({
+      success: true,
+      project: req.params.project,
+      image: profile.image || null,
+      allowedImages: approvedImages(shared, profile),
+      allowedExecutables: profile.allowedExecutables || []
+    });
   } catch (requestError) {
     return jsonError(res, 404, requestError.message);
   }

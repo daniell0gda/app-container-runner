@@ -24,6 +24,16 @@ export function imageAllowed(image, patterns) {
   return patterns.some((pattern) => pattern === image || globToRegExp(pattern).test(image));
 }
 
+// The allowlist that applies to one profile: the shared entries, then its own.
+export function approvedImages(shared, profile) {
+  return [
+    ...(Array.isArray(shared.allowedImages) ? shared.allowedImages : []),
+    ...(Array.isArray(profile.allowedImages) ? profile.allowedImages : [])
+  ]
+    .filter((value) => typeof value === "string" && value.trim())
+    .map((value) => value.trim());
+}
+
 async function imagePresent(docker, image) {
   try {
     await docker.getImage(image).inspect();

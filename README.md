@@ -110,7 +110,12 @@ curl -X POST http://127.0.0.1:8080/workers/release \
   -d '{"project":"simple-ng-proj","workspace":"simple-ng-proj/issue-fix-login-timeout","remove":true}'
 
 curl -H "Authorization: Bearer $RUNNER_TOKEN" http://127.0.0.1:8080/workers
+
+# what a project may run: its default image, approved images, allowed executables
+curl -H "Authorization: Bearer $RUNNER_TOKEN" http://127.0.0.1:8080/profiles/simple-ng-proj
 ```
+
+`/profiles/<project>` answers from the profiles loaded at startup, which is what `/run` enforces. After an edit to `profiles.json` it keeps answering the old values until the runner restarts.
 
 ```bash
 curl -G -H "Authorization: Bearer ***" \
