@@ -76,36 +76,41 @@ Hermes boundary: no Docker socket in Hermes; do not send image names through `ru
 
 ## Services
 
-A worker only runs commands. What those commands talk to — a database, an API — the repository declares under `services:` in the same hermes_config.yaml, and callers pass it as body field **`services`** on `/workers/ensure` and `/run`:
+A worker only runs commands. What those commands talk to — a database, an API — the repository declares in a Compose file that its hermes_config.yaml points at, and callers pass the file's text as body field **`compose`** on `/workers/ensure` and `/run`:
 
 ```yaml
 services:
   tetra-db:
     image: postgres:16
-    env: { POSTGRES_PASSWORD: pdtec }
-    ready: [pg_isready, -U, postgres]   # exec'd in the container until it exits 0
-  tetra-apps:
+    environment: { POSTGRES_PASSWORD: pdtec }
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres, -h, 127.0.0.1]
+      interval: 2s
+      retries: 60
+  tetra-apps:                       # a one-shot job: tetra-api waits for it to exit 0
     image: nexus.pdtec.lan:5500/pdtec-tetra-cli:v84004.2.0
-    once: true                          # a job: must exit 0 before anything after it starts
-    after: [tetra-db]
-    cmd: [platform-apps, install]
+    command: [platform-apps, install]
+    depends_on: { tetra-db: { condition: service_healthy } }
   tetra-api:
     image: nexus.pdtec.lan:5500/pdtec-tetra-devapps-api:v84004.2.0
-    after: [tetra-apps]
-    env:
-      ICE_LIC_PATH: { secret: TETRA_ICE_LIC_PATH }   # from the runner's environment
+    depends_on: { tetra-apps: { condition: service_completed_successfully } }
+    environment:
+      ICE_LIC_PATH: ${TETRA_ICE_LIC_PATH}   # from the runner's environment
 ```
 
-Each workspace gets its own Docker network `ai-net-<hash>`, one container per entry (`ai-svc-<hash>-<name>`) reachable there under its name, and its worker is connected to that network. So `http://tetra-api:8080` works from the worker and from nowhere else. The stack lives until `/workers/release` for that workspace; `remove: true` also deletes the network.
+Each workspace is one Compose project, `ai-ws-<hash>`, run with `docker compose up --detach --wait`. Its services are reachable on the project's network `ai-ws-<hash>_default` under their names, and the workspace's worker is connected to that network. So `http://tetra-api:8080` works from the worker and from nowhere else. Readiness, start order and jobs are Compose's own `healthcheck` and `depends_on`. A one-shot job must be one another service waits for with `condition: service_completed_successfully`: `up --wait` counts any other container that stops, even with exit 0, as a failure. The stack lives until `/workers/release` for that workspace; `remove: true` runs `docker compose down --volumes`, which also deletes the network and the services' volumes.
 
-Every entry is checked against the profile before anything starts:
+The runner checks what `docker compose config` makes of the file before anything starts:
 
-- `image` must match the allowlist (`shared.allowedImages` plus `profile.allowedImages`). Unlike a worker image, it is pulled when missing.
-- `{secret: NAME}` is accepted only for a name in `profile.allowedSecrets`, and only if the runner's own environment has it set. A literal `env` value is passed as written.
-- `after` must name other entries, without cycles. `cmd` and `ready` are token arrays.
-- A service gets no mount, no published port, the image's own user, and the profile's `resources` and worker resolver.
+- Every variable the file interpolates must be in `profile.allowedSecrets`, and set in the runner's environment unless the file gives a default. Compose runs with those secrets and nothing else of the runner's environment.
+- Every service `image` must match the allowlist (`shared.allowedImages` plus `profile.allowedImages`). Unlike a worker image, it is pulled when missing.
+- A service may set only `image`, `command`, `entrypoint`, `environment`, `healthcheck`, `depends_on`, `networks`, `volumes`, `tmpfs`, `working_dir`, `user`, `labels`, `expose`, `hostname`, `init`, `restart`, `shm_size`, `stop_grace_period` and `stop_signal`. Anything else — `ports`, `privileged`, `cap_add`, `devices`, `network_mode`, `build`, `container_name`, `deploy`, … — refuses the file and names the key.
+- Volumes are the file's own, declared plain (no `name`, `external`, `driver`), or anonymous, or `tmpfs`. A bind mount is refused.
+- Services use only the project's default network, and no top-level `secrets` or `configs`. Labels starting with `ai.runner.` are the runner's.
 
-The first call builds the stack in the background and waits up to `SERVICES_WAIT_MS` (60 s). A stack not ready by then answers HTTP 503 with `services: "starting"` and the current step; the build carries on and the next call picks it up. A failed stack answers HTTP 500 with `services: "failed"` and the last log lines, and stays failed until the definition changes or the workspace is released. An unchanged definition is reused, also after a runner restart, as long as every service is still running and every job exited 0; a changed one replaces the stack.
+On top of the file the runner gives every service its labels, `restart: "no"`, and the profile's `resources` and worker resolver.
+
+The first call builds the stack in the background and waits up to `SERVICES_WAIT_MS` (60 s). A stack not ready by then answers HTTP 503 with `services: "starting"`; the build carries on and the next call picks it up. `up` may take `SERVICES_UP_TIMEOUT_MS` (20 min), pulls included. A failed stack answers HTTP 500 with `services: "failed"`, Compose's error and the last log lines of each service that exited non-zero or turned unhealthy, and stays failed until the file changes or the workspace is released. An unchanged file is reused, also after a runner restart, as long as every service is still running and every job exited 0; a changed one takes the stack down and brings it up again. A file that fails the checks answers HTTP 400 and starts nothing.
 
 ## Build/run
 
@@ -169,4 +174,4 @@ curl -G -H "Authorization: Bearer ***" \
 
 `/run` returns `success`, `exitCode`, `durationMs`, combined output, project, workspace, and worker. Commands must be non-empty token arrays, first token allowed by the profile, and never shell wrappers such as `bash -lc` or `sh -c`. Workspace must be relative and cannot contain traversal. On timeout, the runner kills the Docker exec PID, stops and force-removes the managed worker, and returns HTTP 504 with `timedOut: true`, `killResult`, and `cleanup` metadata. Ordinary non-zero exits keep the worker available for inspection.
 
-Environment: `RUNNER_TOKEN`, `NETWORK_NAME` (optional), `HERMES_CONTAINER` (optional), `WORKSPACE_ROOT`, `PROFILES_FILE=/app/profiles.json`, `RUNNER_TIMEOUT_MS=900000`, `MAX_OUTPUT_BYTES=1048576`, `ARTIFACT_ROOT`, `ARTIFACT_MAX_BYTES`, `PORT=8080`, `SERVICES_WAIT_MS=60000`, `SERVICE_READY_TIMEOUT_MS=300000`, `SERVICE_JOB_TIMEOUT_MS=1200000`, and every secret a profile lists in `allowedSecrets`.
+Environment: `RUNNER_TOKEN`, `NETWORK_NAME` (optional), `HERMES_CONTAINER` (optional), `WORKSPACE_ROOT`, `PROFILES_FILE=/app/profiles.json`, `RUNNER_TIMEOUT_MS=900000`, `MAX_OUTPUT_BYTES=1048576`, `ARTIFACT_ROOT`, `ARTIFACT_MAX_BYTES`, `PORT=8080`, `SERVICES_WAIT_MS=60000`, `SERVICES_UP_TIMEOUT_MS=1200000`, and every secret a profile lists in `allowedSecrets`.

@@ -7,12 +7,11 @@ import { workerMatchesIssueRelease } from "./worker-match.mjs";
 import { workerDnsOptions } from "./worker-dns.mjs";
 import { workerNetworkOptions } from "./worker-network.mjs";
 import { approvedImages, ensureLocalImage, imageAllowed } from "./worker-image.mjs";
-import { createServiceStacks } from "./workspace-services.mjs";
+import { composeCli, createServiceStacks } from "./workspace-compose.mjs";
 
 const app = express();
-const docker = new Docker({
-  socketPath: process.env.DOCKER_SOCKET || "/var/run/docker.sock"
-});
+const socketPath = process.env.DOCKER_SOCKET || "/var/run/docker.sock";
+const docker = new Docker({ socketPath });
 const port = Number.parseInt(process.env.PORT || "8080", 10);
 const token = process.env.RUNNER_TOKEN;
 const timeoutMs = Number.parseInt(process.env.RUNNER_TIMEOUT_MS || "900000", 10);
@@ -37,12 +36,9 @@ const envMs = (name, fallback) => Number.parseInt(process.env[name] || fallback,
 // How long one request waits for a workspace's services before answering 503;
 // the build carries on, and the caller retries.
 const servicesWaitMs = envMs("SERVICES_WAIT_MS", "60000");
-const serviceTimeouts = {
-  readyMs: envMs("SERVICE_READY_TIMEOUT_MS", "300000"),
-  jobMs: envMs("SERVICE_JOB_TIMEOUT_MS", "1200000"),
-  probeMs: 10000,
-  pollMs: 2000
-};
+// How long `docker compose up --wait` may take, pulls, jobs and health checks
+// included, before the stack counts as failed.
+const serviceTimeouts = { upMs: envMs("SERVICES_UP_TIMEOUT_MS", "1200000") };
 let shared;
 let profiles;
 let stacks;
@@ -277,6 +273,18 @@ function resourceOptions(resources = {}) {
   return HostConfig;
 }
 
+// The same limits and resolver a worker gets, in Compose's terms, for every
+// service of the profile.
+function serviceOptions(profile) {
+  const { Memory, NanoCpus } = resourceOptions(profile.resources);
+  return {
+    ...(Memory ? { mem_limit: Memory } : {}),
+    ...(NanoCpus ? { cpus: NanoCpus / 1e9 } : {}),
+    ...(workerDns.Dns ? { dns: workerDns.Dns } : {}),
+    ...(workerDns.DnsSearch ? { dns_search: workerDns.DnsSearch } : {})
+  };
+}
+
 function workerResult(info, project, identifier, image) {
   return {
     container: info.Name?.replace(/^\//, "") || info.Id,
@@ -393,13 +401,17 @@ function servicesError(httpStatus, services, message) {
   return Object.assign(Error(message), { httpStatus, services });
 }
 
-// Brings up the services the project's hermes_config.yaml declares, so the
-// worker can reach them by name. A build that outlasts one request carries on:
-// the caller gets a 503 and the next call picks up the same build.
-async function ensureServices(project, identifier, profile, definition) {
-  if (definition === undefined || definition === null) return null;
+// Brings up the services of the Compose file the project's hermes_config.yaml
+// points at, so the worker can reach them by name. A build that outlasts one
+// request carries on: the caller gets a 503 and the next call picks up the same
+// build.
+async function ensureServices(project, identifier, profile, compose) {
+  if (compose === undefined || compose === null) return null;
+  if (typeof compose !== "string" || !compose.trim()) {
+    throw Error("compose must be the text of a Compose file");
+  }
   const record = await stacks.waitFor(
-    stacks.ensure({ project, workspace: identifier, profile, definition, env: process.env }),
+    await stacks.ensure({ project, workspace: identifier, profile, text: compose, env: process.env }),
     servicesWaitMs
   );
   if (record.status === "starting") {
@@ -414,14 +426,14 @@ async function ensureServices(project, identifier, profile, definition) {
       500,
       "failed",
       `services for ${identifier} failed: ${record.error}\n` +
-        "Fix the services in hermes_config.yaml, or release the workspace to start them again."
+        "Fix the compose file, or release the workspace to start the services again."
     );
   }
   return record.network;
 }
 
-async function ensureWorkerWithServices(project, identifier, profile, image, services) {
-  const network = await ensureServices(project, identifier, profile, services);
+async function ensureWorkerWithServices(project, identifier, profile, image, compose) {
+  const network = await ensureServices(project, identifier, profile, compose);
   const worker = await ensureWorker(project, identifier, profile, image);
   if (network) await stacks.attach(worker.containerId, network);
   return worker;
@@ -570,15 +582,19 @@ async function executeCommand(worker, workingDirectory, cmd) {
 async function releaseWorker(project, identifier, remove) {
   const allowedProjects = profileAliasesFor(project);
   const knownProjects = Object.keys(profiles);
-  const found = (await listAllManagedWorkers()).filter((container) =>
-    workerMatchesIssueRelease({
-      workspaceLabel: container.Labels?.["ai.runner.workspace"],
-      containerName: containerDisplayName(container),
-      projectLabel: container.Labels?.["ai.runner.project"],
-      requestedWorkspace: identifier,
-      allowedProjects,
-      knownProjects
-    })
+  // A service carries a role and belongs to its Compose project, which
+  // stacks.release takes down as a whole.
+  const found = (await listAllManagedWorkers()).filter(
+    (container) =>
+      !container.Labels?.["ai.runner.role"] &&
+      workerMatchesIssueRelease({
+        workspaceLabel: container.Labels?.["ai.runner.workspace"],
+        containerName: containerDisplayName(container),
+        projectLabel: container.Labels?.["ai.runner.project"],
+        requestedWorkspace: identifier,
+        allowedProjects,
+        knownProjects
+      })
   );
   if (found.length === 0) {
     return {
@@ -598,9 +614,7 @@ async function releaseWorker(project, identifier, remove) {
       const container = docker.getContainer(info.Id);
       const inspection = await container.inspect();
       if (inspection.State.Running) await container.stop({ t: 10 });
-      // `v` also takes a service's anonymous volumes (a database's data), never a
-      // named volume or bind such as the workspace.
-      if (remove) await container.remove({ v: true });
+      if (remove) await container.remove();
       containers.push(name);
     } catch (releaseError) {
       errors.push({ container: name, error: releaseError.message });
@@ -684,12 +698,12 @@ app.use((req, res, next) =>
 
 app.post("/workers/ensure", async (req, res) => {
   try {
-    const { project, workspace: identifier, image, services } = req.body || {};
+    const { project, workspace: identifier, image, compose } = req.body || {};
     const profile = getProfile(project);
     resolveWorkspace(profile, identifier);
     return res.json({
       success: true,
-      ...(await ensureWorkerWithServices(project, identifier, profile, image, services))
+      ...(await ensureWorkerWithServices(project, identifier, profile, image, compose))
     });
   } catch (requestError) {
     return res.status(requestError.httpStatus || 400).json({
@@ -724,13 +738,13 @@ app.post("/run", async (req, res) => {
   let identifier;
   let cmd;
   let image;
-  let services;
+  let compose;
   try {
-    ({ project, workspace: identifier, cmd, image, services } = req.body || {});
+    ({ project, workspace: identifier, cmd, image, compose } = req.body || {});
     const profile = getProfile(project);
     const resolved = resolveWorkspace(profile, identifier);
     validateCommand(profile, cmd);
-    worker = await ensureWorkerWithServices(project, identifier, profile, image, services);
+    worker = await ensureWorkerWithServices(project, identifier, profile, image, compose);
     const result = await executeCommand(worker, resolved.path, cmd);
     return res.status(result.success ? 200 : 422).json({
       success: result.success,
@@ -847,9 +861,10 @@ app.get("/workers", async (_req, res) => {
 try {
   await loadProfiles();
   stacks = createServiceStacks({
+    compose: composeCli({ socketPath }),
     docker,
     shared,
-    hostConfig: (profile) => ({ ...resourceOptions(profile.resources), ...workerDns }),
+    serviceOptions,
     timeouts: serviceTimeouts
   });
   app.listen(port, "0.0.0.0", () =>
