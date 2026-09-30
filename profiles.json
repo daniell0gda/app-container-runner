@@ -6,8 +6,7 @@
     "managedLabel": "ai.runner.managed",
     "managedLabelValue": "true",
     "allowedImages": [
-      "nexus.pdtec.lan:5500/linux-nodejs:lts",
-      "nexus.pdtec.lan:5500/linux-nodejs:24",
+      "nexus.pdtec.lan:5500/linux-nodejs:*",
       "nexus.pdtec.lan:5500/linux-nodejs-chromium:lts-snapshot-mr-79",
       "nexus.pdtec.lan:5500/linux-cypress:15-snapshot-mr-79",
       "nexus.pdtec.lan:5500/linux-dotnet-sdk-nodejs:*"
