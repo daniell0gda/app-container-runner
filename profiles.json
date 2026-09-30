@@ -15,6 +15,14 @@
   "profiles": {
     "simple-ng-proj": {
       "image": "nexus.pdtec.lan:5500/linux-nodejs:lts",
+      "allowedImages": [
+        "postgres:16",
+        "nexus.pdtec.lan:5500/linux-dotnet-sdk:*",
+        "nexus.pdtec.lan:5500/pdtec-tetra-*"
+      ],
+      "allowedSecrets": [
+        "TETRA_ICE_LIC_PATH"
+      ],
       "allowedExecutables": [
         "npm",
         "npx",
