@@ -296,9 +296,11 @@ export function createServiceStacks({ docker, shared, hostConfig, timeouts }) {
     await network.remove();
   }
 
+  // `v` takes the anonymous volumes an image declares with it — postgres:16 gets a
+  // new one for its data on every start, and each would outlive the stack.
   async function teardown(project, workspace) {
     for (const info of await stackContainers(project, workspace)) {
-      await docker.getContainer(info.Id).remove({ force: true });
+      await docker.getContainer(info.Id).remove({ force: true, v: true });
     }
     await removeNetwork(stackNames(project, workspace).network);
   }

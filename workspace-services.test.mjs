@@ -142,9 +142,9 @@ function fakeDocker({ jobExitCode = 0, readyAfterProbes = 0 } = {}) {
     kill: async () => {
       containers.get(id).State = "exited";
     },
-    remove: async () => {
+    remove: async (options = {}) => {
       if (!containers.has(id)) throw notFound();
-      events.push(`remove ${containers.get(id).name}`);
+      events.push(`remove ${containers.get(id).name}${options.v ? " with volumes" : ""}`);
       containers.delete(id);
     },
     logs: async () => frame(2, "boom\n"),
@@ -288,7 +288,7 @@ test("an edited definition replaces the stack", async () => {
   assert.deepEqual(db.options.Env, ["POSTGRES_PASSWORD=other"]);
 });
 
-test("release with remove takes the containers and the network", async () => {
+test("release with remove takes the containers, their volumes and the network", async () => {
   const docker = fakeDocker();
   const stacks = stacksOn(docker);
   await settled(stacks);
@@ -296,6 +296,7 @@ test("release with remove takes the containers and the network", async () => {
   await stacks.release(project, workspace, { remove: true });
   assert.equal(docker.containers.size, 0);
   assert.equal(docker.networks.size, 0);
+  assert.ok(docker.events.includes("remove db with volumes"));
 });
 
 test("a worker already on the stack's network is not connected again", async () => {

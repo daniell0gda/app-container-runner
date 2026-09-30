@@ -598,7 +598,9 @@ async function releaseWorker(project, identifier, remove) {
       const container = docker.getContainer(info.Id);
       const inspection = await container.inspect();
       if (inspection.State.Running) await container.stop({ t: 10 });
-      if (remove) await container.remove();
+      // `v` also takes a service's anonymous volumes (a database's data), never a
+      // named volume or bind such as the workspace.
+      if (remove) await container.remove({ v: true });
       containers.push(name);
     } catch (releaseError) {
       errors.push({ container: name, error: releaseError.message });
