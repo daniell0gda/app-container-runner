@@ -74,6 +74,39 @@ Profile `image` remains the default/fallback and an allowlist member; it is no l
 
 Hermes boundary: no Docker socket in Hermes; do not send image names through `run_project_cmd` beyond the approved request fields (`project`, `workspace`, `image`, `cmd`, …).
 
+## Services
+
+A worker only runs commands. What those commands talk to — a database, an API — the repository declares under `services:` in the same hermes_config.yaml, and callers pass it as body field **`services`** on `/workers/ensure` and `/run`:
+
+```yaml
+services:
+  tetra-db:
+    image: postgres:16
+    env: { POSTGRES_PASSWORD: pdtec }
+    ready: [pg_isready, -U, postgres]   # exec'd in the container until it exits 0
+  tetra-apps:
+    image: nexus.pdtec.lan:5500/pdtec-tetra-cli:v84004.2.0
+    once: true                          # a job: must exit 0 before anything after it starts
+    after: [tetra-db]
+    cmd: [platform-apps, install]
+  tetra-api:
+    image: nexus.pdtec.lan:5500/pdtec-tetra-devapps-api:v84004.2.0
+    after: [tetra-apps]
+    env:
+      ICE_LIC_PATH: { secret: TETRA_ICE_LIC_PATH }   # from the runner's environment
+```
+
+Each workspace gets its own Docker network `ai-net-<hash>`, one container per entry (`ai-svc-<hash>-<name>`) reachable there under its name, and its worker is connected to that network. So `http://tetra-api:8080` works from the worker and from nowhere else. The stack lives until `/workers/release` for that workspace; `remove: true` also deletes the network.
+
+Every entry is checked against the profile before anything starts:
+
+- `image` must match the allowlist (`shared.allowedImages` plus `profile.allowedImages`). Unlike a worker image, it is pulled when missing.
+- `{secret: NAME}` is accepted only for a name in `profile.allowedSecrets`, and only if the runner's own environment has it set. A literal `env` value is passed as written.
+- `after` must name other entries, without cycles. `cmd` and `ready` are token arrays.
+- A service gets no mount, no published port, the image's own user, and the profile's `resources` and worker resolver.
+
+The first call builds the stack in the background and waits up to `SERVICES_WAIT_MS` (60 s). A stack not ready by then answers HTTP 503 with `services: "starting"` and the current step; the build carries on and the next call picks it up. A failed stack answers HTTP 500 with `services: "failed"` and the last log lines, and stays failed until the definition changes or the workspace is released. An unchanged definition is reused, also after a runner restart, as long as every service is still running and every job exited 0; a changed one replaces the stack.
+
 ## Build/run
 
 ```bash
@@ -111,8 +144,15 @@ curl -X POST http://127.0.0.1:8080/workers/release \
 
 curl -H "Authorization: Bearer $RUNNER_TOKEN" http://127.0.0.1:8080/workers
 
-# what a project may run: its default image, approved images, allowed executables
+# what a project may run: its default image, approved images, allowed executables, allowed secrets
 curl -H "Authorization: Bearer $RUNNER_TOKEN" http://127.0.0.1:8080/profiles/simple-ng-proj
+
+# the last lines of one service's log
+curl -G -H "Authorization: Bearer $RUNNER_TOKEN" \
+  --data-urlencode "project=simple-ng-proj" \
+  --data-urlencode "workspace=simple-ng-proj/issue-fix-login-timeout" \
+  --data-urlencode "service=tetra-api" --data-urlencode "tail=200" \
+  http://127.0.0.1:8080/services/logs
 ```
 
 `/profiles/<project>` answers from the profiles loaded at startup, which is what `/run` enforces. After an edit to `profiles.json` it keeps answering the old values until the runner restarts.
@@ -129,4 +169,4 @@ curl -G -H "Authorization: Bearer ***" \
 
 `/run` returns `success`, `exitCode`, `durationMs`, combined output, project, workspace, and worker. Commands must be non-empty token arrays, first token allowed by the profile, and never shell wrappers such as `bash -lc` or `sh -c`. Workspace must be relative and cannot contain traversal. On timeout, the runner kills the Docker exec PID, stops and force-removes the managed worker, and returns HTTP 504 with `timedOut: true`, `killResult`, and `cleanup` metadata. Ordinary non-zero exits keep the worker available for inspection.
 
-Environment: `RUNNER_TOKEN`, `NETWORK_NAME` (optional), `HERMES_CONTAINER` (optional), `WORKSPACE_ROOT`, `PROFILES_FILE=/app/profiles.json`, `RUNNER_TIMEOUT_MS=900000`, `MAX_OUTPUT_BYTES=1048576`, `ARTIFACT_ROOT`, `ARTIFACT_MAX_BYTES`, `PORT=8080`.
+Environment: `RUNNER_TOKEN`, `NETWORK_NAME` (optional), `HERMES_CONTAINER` (optional), `WORKSPACE_ROOT`, `PROFILES_FILE=/app/profiles.json`, `RUNNER_TIMEOUT_MS=900000`, `MAX_OUTPUT_BYTES=1048576`, `ARTIFACT_ROOT`, `ARTIFACT_MAX_BYTES`, `PORT=8080`, `SERVICES_WAIT_MS=60000`, `SERVICE_READY_TIMEOUT_MS=300000`, `SERVICE_JOB_TIMEOUT_MS=1200000`, and every secret a profile lists in `allowedSecrets`.

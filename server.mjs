@@ -7,6 +7,7 @@ import { workerMatchesIssueRelease } from "./worker-match.mjs";
 import { workerDnsOptions } from "./worker-dns.mjs";
 import { workerNetworkOptions } from "./worker-network.mjs";
 import { approvedImages, ensureLocalImage, imageAllowed } from "./worker-image.mjs";
+import { createServiceStacks } from "./workspace-services.mjs";
 
 const app = express();
 const docker = new Docker({
@@ -32,8 +33,19 @@ const allowedArtifactExtensions = new Set([".json", ".jpg", ".jpeg", ".log", ".p
 const workspacePattern =
   /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)+$/;
 const shellWrappers = new Set(["sh", "bash", "dash", "zsh"]);
+const envMs = (name, fallback) => Number.parseInt(process.env[name] || fallback, 10);
+// How long one request waits for a workspace's services before answering 503;
+// the build carries on, and the caller retries.
+const servicesWaitMs = envMs("SERVICES_WAIT_MS", "60000");
+const serviceTimeouts = {
+  readyMs: envMs("SERVICE_READY_TIMEOUT_MS", "300000"),
+  jobMs: envMs("SERVICE_JOB_TIMEOUT_MS", "1200000"),
+  probeMs: 10000,
+  pollMs: 2000
+};
 let shared;
 let profiles;
+let stacks;
 
 const jsonError = (res, status, message) =>
   res.status(status).json({ success: false, error: message });
@@ -377,6 +389,44 @@ async function ensureWorker(project, identifier, profile, requestedImage) {
   return workerResult(info, project, identifier, image);
 }
 
+function servicesError(httpStatus, services, message) {
+  return Object.assign(Error(message), { httpStatus, services });
+}
+
+// Brings up the services the project's hermes_config.yaml declares, so the
+// worker can reach them by name. A build that outlasts one request carries on:
+// the caller gets a 503 and the next call picks up the same build.
+async function ensureServices(project, identifier, profile, definition) {
+  if (definition === undefined || definition === null) return null;
+  const record = await stacks.waitFor(
+    stacks.ensure({ project, workspace: identifier, profile, definition, env: process.env }),
+    servicesWaitMs
+  );
+  if (record.status === "starting") {
+    throw servicesError(
+      503,
+      "starting",
+      `services for ${identifier} are still starting: ${record.step}. Retry this call in a minute.`
+    );
+  }
+  if (record.status === "failed") {
+    throw servicesError(
+      500,
+      "failed",
+      `services for ${identifier} failed: ${record.error}\n` +
+        "Fix the services in hermes_config.yaml, or release the workspace to start them again."
+    );
+  }
+  return record.network;
+}
+
+async function ensureWorkerWithServices(project, identifier, profile, image, services) {
+  const network = await ensureServices(project, identifier, profile, services);
+  const worker = await ensureWorker(project, identifier, profile, image);
+  if (network) await stacks.attach(worker.containerId, network);
+  return worker;
+}
+
 function validateCommand(profile, cmd) {
   if (
     !Array.isArray(cmd) ||
@@ -632,15 +682,19 @@ app.use((req, res, next) =>
 
 app.post("/workers/ensure", async (req, res) => {
   try {
-    const { project, workspace: identifier, image } = req.body || {};
+    const { project, workspace: identifier, image, services } = req.body || {};
     const profile = getProfile(project);
     resolveWorkspace(profile, identifier);
     return res.json({
       success: true,
-      ...(await ensureWorker(project, identifier, profile, image))
+      ...(await ensureWorkerWithServices(project, identifier, profile, image, services))
     });
   } catch (requestError) {
-    return jsonError(res, 400, requestError.message);
+    return res.status(requestError.httpStatus || 400).json({
+      success: false,
+      error: requestError.message,
+      services: requestError.services
+    });
   }
 });
 
@@ -654,10 +708,9 @@ app.post("/workers/release", async (req, res) => {
     const profile = getProfile(project);
     resolveWorkspace(profile, identifier);
     if (typeof remove !== "boolean") throw Error("remove must be boolean");
-    return res.json({
-      success: true,
-      ...(await releaseWorker(project, identifier, remove))
-    });
+    const released = await releaseWorker(project, identifier, remove);
+    await stacks.release(project, identifier, { remove });
+    return res.json({ success: true, ...released });
   } catch (requestError) {
     return jsonError(res, 400, requestError.message);
   }
@@ -669,12 +722,13 @@ app.post("/run", async (req, res) => {
   let identifier;
   let cmd;
   let image;
+  let services;
   try {
-    ({ project, workspace: identifier, cmd, image } = req.body || {});
+    ({ project, workspace: identifier, cmd, image, services } = req.body || {});
     const profile = getProfile(project);
     const resolved = resolveWorkspace(profile, identifier);
     validateCommand(profile, cmd);
-    worker = await ensureWorker(project, identifier, profile, image);
+    worker = await ensureWorkerWithServices(project, identifier, profile, image, services);
     const result = await executeCommand(worker, resolved.path, cmd);
     return res.status(result.success ? 200 : 422).json({
       success: result.success,
@@ -690,9 +744,10 @@ app.post("/run", async (req, res) => {
     const cleanup = timedOut && worker
       ? await clearTimedOutWorker(project, identifier, worker)
       : undefined;
-    return res.status(timedOut ? 504 : 400).json({
+    return res.status(timedOut ? 504 : requestError.httpStatus || 400).json({
       success: false,
       error: requestError.message,
+      services: requestError.services,
       timedOut: Boolean(timedOut),
       output: requestError.partialOutput || undefined,
       killResult: requestError.killResult || undefined,
@@ -725,7 +780,29 @@ app.get("/profiles/:project", (req, res) => {
       project: req.params.project,
       image: profile.image || null,
       allowedImages: approvedImages(shared, profile),
-      allowedExecutables: profile.allowedExecutables || []
+      allowedExecutables: profile.allowedExecutables || [],
+      allowedSecrets: profile.allowedSecrets || []
+    });
+  } catch (requestError) {
+    return jsonError(res, 404, requestError.message);
+  }
+});
+
+app.get("/services/logs", async (req, res) => {
+  try {
+    const { project, workspace: identifier, service, tail = "200" } = req.query;
+    const profile = getProfile(project);
+    resolveWorkspace(profile, identifier);
+    const lines = Number.parseInt(tail, 10);
+    if (!Number.isSafeInteger(lines) || lines < 1 || lines > 2000) {
+      throw Error("tail must be a number of lines from 1 to 2000");
+    }
+    return res.json({
+      success: true,
+      project,
+      workspace: identifier,
+      service,
+      logs: await stacks.logs(project, identifier, service, lines)
     });
   } catch (requestError) {
     return jsonError(res, 404, requestError.message);
@@ -754,6 +831,8 @@ app.get("/workers", async (_req, res) => {
           containerId: container.Id,
           project: container.Labels["ai.runner.project"],
           workspace: container.Labels["ai.runner.workspace"],
+          role: container.Labels["ai.runner.role"] || "worker",
+          service: container.Labels["ai.runner.service"],
           image: container.Image,
           status: container.State
         }))
@@ -765,6 +844,12 @@ app.get("/workers", async (_req, res) => {
 
 try {
   await loadProfiles();
+  stacks = createServiceStacks({
+    docker,
+    shared,
+    hostConfig: (profile) => ({ ...resourceOptions(profile.resources), ...workerDns }),
+    timeouts: serviceTimeouts
+  });
   app.listen(port, "0.0.0.0", () =>
     console.log(`profile worker runner listening on ${port}`)
   );
