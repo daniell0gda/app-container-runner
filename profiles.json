@@ -21,7 +21,7 @@
         "nexus.pdtec.lan:5500/pdtec-tetra-*"
       ],
       "allowedSecrets": [
-        "TETRA_ICE_LIC_PATH"
+        "ICE_LICENSE_8"
       ],
       "allowedExecutables": [
         "npm",
