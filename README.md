@@ -102,7 +102,7 @@ Each workspace is one Compose project, `ai-ws-<hash>`, run with `docker compose 
 
 The runner checks what `docker compose config` makes of the file before anything starts:
 
-- Every variable the file interpolates must be in `profile.allowedSecrets`, and set in the runner's environment unless the file gives a default. Compose runs with those secrets and nothing else of the runner's environment.
+- Every variable the file interpolates must be in `profile.allowedSecrets`, and set in the runner's environment unless the file gives a default. Compose runs with those secrets and nothing else of the runner's environment. `allowedSecrets` is a list of names, or a map of name to a one-line description of what the secret is for and how a service uses it; `/profiles/<project>` returns the descriptions as `secretDescriptions`, so a caller learns what a secret is without seeing it.
 - Every service `image` must match the allowlist (`shared.allowedImages` plus `profile.allowedImages`). Unlike a worker image, it is pulled when missing.
 - A service may set only `image`, `command`, `entrypoint`, `environment`, `healthcheck`, `depends_on`, `networks`, `volumes`, `tmpfs`, `working_dir`, `user`, `labels`, `expose`, `hostname`, `init`, `restart`, `shm_size`, `stop_grace_period` and `stop_signal`. Anything else — `ports`, `privileged`, `cap_add`, `devices`, `network_mode`, `build`, `container_name`, `deploy`, … — refuses the file and names the key.
 - Volumes are the file's own, declared plain (no `name`, `external`, `driver`), or anonymous, or `tmpfs`. A bind mount is refused.
@@ -149,7 +149,7 @@ curl -X POST http://127.0.0.1:8080/workers/release \
 
 curl -H "Authorization: Bearer $RUNNER_TOKEN" http://127.0.0.1:8080/workers
 
-# what a project may run: its default image, approved images, allowed executables, allowed secrets
+# what a project may run: its default image, approved images, allowed executables, allowed secrets and their descriptions
 curl -H "Authorization: Bearer $RUNNER_TOKEN" http://127.0.0.1:8080/profiles/simple-ng-proj
 
 # the last lines of one service's log

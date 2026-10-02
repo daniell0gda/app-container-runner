@@ -77,6 +77,25 @@ export function composeProjectName(project, workspace) {
 
 export const projectNetwork = (projectName) => `${projectName}_default`;
 
+const describesSecrets = (secrets) => Boolean(secrets) && typeof secrets === "object" && !Array.isArray(secrets);
+
+/**
+ * The secret names a profile allows. `allowedSecrets` is either a list of names or a
+ * map of name to a description of what the secret is for.
+ */
+export function secretNames(profile) {
+  const secrets = profile.allowedSecrets;
+  if (Array.isArray(secrets)) return secrets;
+  return describesSecrets(secrets) ? Object.keys(secrets) : [];
+}
+
+/** The description of each secret a profile describes, by name; empty for a list of names. */
+export function secretDescriptions(profile) {
+  const secrets = profile.allowedSecrets;
+  if (!describesSecrets(secrets)) return {};
+  return Object.fromEntries(Object.entries(secrets).filter(([, description]) => typeof description === "string"));
+}
+
 // Every variable the file interpolates must be a secret the profile lists, and
 // set on the runner unless the file gives it a default. Compose only ever sees
 // those secrets, so this is about saying why a value came out empty, not about
@@ -249,7 +268,7 @@ export function createServiceStacks({ compose, docker, shared, serviceOptions, t
   // What Compose makes of the repository's file, checked against the profile.
   async function load({ project, workspace, profile, text, env }) {
     const projectName = composeProjectName(project, workspace);
-    const allowedSecrets = Array.isArray(profile.allowedSecrets) ? profile.allowedSecrets : [];
+    const allowedSecrets = secretNames(profile);
     const secrets = Object.fromEntries(allowedSecrets.filter((name) => env[name]).map((name) => [name, env[name]]));
     const config = await withFiles({ [composeFile]: text }, async (dir) => {
       const configArgs = [...fileArgs(projectName, dir, [composeFile]), "config", "--format", "json"];

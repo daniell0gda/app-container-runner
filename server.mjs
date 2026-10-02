@@ -7,7 +7,7 @@ import { workerMatchesIssueRelease } from "./worker-match.mjs";
 import { workerDnsOptions } from "./worker-dns.mjs";
 import { workerNetworkOptions } from "./worker-network.mjs";
 import { approvedImages, ensureLocalImage, imageAllowed } from "./worker-image.mjs";
-import { composeCli, createServiceStacks } from "./workspace-compose.mjs";
+import { composeCli, createServiceStacks, secretDescriptions, secretNames } from "./workspace-compose.mjs";
 
 const app = express();
 const socketPath = process.env.DOCKER_SOCKET || "/var/run/docker.sock";
@@ -797,7 +797,8 @@ app.get("/profiles/:project", (req, res) => {
       image: profile.image || null,
       allowedImages: approvedImages(shared, profile),
       allowedExecutables: profile.allowedExecutables || [],
-      allowedSecrets: profile.allowedSecrets || []
+      allowedSecrets: secretNames(profile),
+      secretDescriptions: secretDescriptions(profile)
     });
   } catch (requestError) {
     return jsonError(res, 404, requestError.message);

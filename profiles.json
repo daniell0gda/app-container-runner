@@ -20,9 +20,9 @@
         "nexus.pdtec.lan:5500/linux-dotnet-sdk:*",
         "nexus.pdtec.lan:5500/pdtec-tetra-*"
       ],
-      "allowedSecrets": [
-        "ICE_LICENSE_8"
-      ],
+      "allowedSecrets": {
+        "ICE_LICENSE_8": "The ice.NET 8 licence, issued for agent runs and supplied by the runner. A service that needs a licence sets ICE_LIC_PATH: ${ICE_LICENSE_8}; no licence file or mount is needed, and it is not a trick."
+      },
       "allowedExecutables": [
         "npm",
         "npx",

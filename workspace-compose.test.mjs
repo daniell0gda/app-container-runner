@@ -7,7 +7,9 @@ import {
   composeProjectName,
   createServiceStacks,
   definitionHash,
-  projectNetwork
+  projectNetwork,
+  secretDescriptions,
+  secretNames
 } from "./workspace-compose.mjs";
 
 const db = "postgres:16";
@@ -268,6 +270,26 @@ test("compose sees only the secrets the profile lists", async () => {
     assert.deepEqual(call.options.secrets, { TETRA_ICE_LIC_PATH: env.TETRA_ICE_LIC_PATH });
   }
   assert.equal(compose.ran("up")[0].options.secrets.TETRA_ICE_LIC_PATH, env.TETRA_ICE_LIC_PATH);
+});
+
+test("a profile that describes its secrets hands compose the same secrets", async () => {
+  const docker = fakeDocker();
+  const compose = fakeCompose(docker);
+  const described = { allowedSecrets: { TETRA_ICE_LIC_PATH: "the ice.NET 8 licence" } };
+  const record = await stacksOn(docker, compose).ensure({ project, workspace, profile: described, text: "x", env });
+  await record.promise;
+
+  assert.equal(record.status, "ready");
+  assert.deepEqual(compose.ran("up")[0].options.secrets, { TETRA_ICE_LIC_PATH: env.TETRA_ICE_LIC_PATH });
+});
+
+test("allowedSecrets is a list of names or a map of name to description", () => {
+  const described = { allowedSecrets: { ICE_LICENSE_8: "the ice.NET 8 licence", PLAIN: 42 } };
+  assert.deepEqual(secretNames(profile), ["TETRA_ICE_LIC_PATH"]);
+  assert.deepEqual(secretNames(described), ["ICE_LICENSE_8", "PLAIN"]);
+  assert.deepEqual(secretNames({}), []);
+  assert.deepEqual(secretDescriptions(described), { ICE_LICENSE_8: "the ice.NET 8 licence" });
+  assert.deepEqual(secretDescriptions(profile), {});
 });
 
 test("a refused file starts nothing", async () => {
