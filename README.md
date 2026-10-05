@@ -112,6 +112,19 @@ On top of the file the runner gives every service its labels, `restart: "no"`, a
 
 The first call builds the stack in the background and waits up to `SERVICES_WAIT_MS` (60 s). A stack not ready by then answers HTTP 503 with `services: "starting"`; the build carries on and the next call picks it up. `up` may take `SERVICES_UP_TIMEOUT_MS` (20 min), pulls included. A failed stack answers HTTP 500 with `services: "failed"`, Compose's error and the last log lines of each service that exited non-zero or turned unhealthy, and stays failed until the file changes or the workspace is released. An unchanged file is reused, also after a runner restart, as long as every service is still running and every job exited 0; a changed one takes the stack down and brings it up again. A file that fails the checks answers HTTP 400 and starts nothing.
 
+## Command environment
+
+A command built from the worktree can need a secret too: a Tetra server started with `dotnet run` checks its ice.NET licence at startup. The repository declares the variables its commands run with under `env:` in hermes_config.yaml, and callers pass them as body field **`env`** on `/run`:
+
+```yaml
+env:
+  ICE_LIC_PATH: ${ICE_LICENSE_8}
+```
+
+- `env` is a map of variable name to string. A plain value is passed as written.
+- `${NAME}` in a value is filled from the runner's environment, and only for a name in `profile.allowedSecrets`, the same rule as for a Compose file. Any other name, or an allowed one the runner lacks, answers HTTP 400 naming it and runs nothing.
+- The variables are set on each command's `docker exec`, not on the worker, so a new secret value reaches the next command without recreating the worker.
+
 ## Build/run
 
 ```bash
@@ -171,6 +184,8 @@ curl -G -H "Authorization: Bearer ***" \
 ```
 
 `/artifacts` downloads only workspace-relative files from the Hermes-visible root, with traversal, extension, file-type, and size-limit checks. The runner container must mount the workspace dataset at `/workspace/workspaces` (or configure `ARTIFACT_ROOT`).
+
+`/run` also takes `env`, the variables the command runs with (see [Command environment](#command-environment)).
 
 `/run` returns `success`, `exitCode`, `durationMs`, combined output, project, workspace, and worker. Commands must be non-empty token arrays, first token allowed by the profile, and never shell wrappers such as `bash -lc` or `sh -c`. Workspace must be relative and cannot contain traversal. On timeout, the runner kills the Docker exec PID, stops and force-removes the managed worker, and returns HTTP 504 with `timedOut: true`, `killResult`, and `cleanup` metadata. Ordinary non-zero exits keep the worker available for inspection.
 

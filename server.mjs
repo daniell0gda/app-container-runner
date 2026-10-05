@@ -8,6 +8,7 @@ import { workerDnsOptions } from "./worker-dns.mjs";
 import { workerNetworkOptions } from "./worker-network.mjs";
 import { approvedImages, ensureLocalImage, imageAllowed } from "./worker-image.mjs";
 import { composeCli, createServiceStacks, secretDescriptions, secretNames } from "./workspace-compose.mjs";
+import { commandEnv } from "./command-env.mjs";
 
 const app = express();
 const socketPath = process.env.DOCKER_SOCKET || "/var/run/docker.sock";
@@ -493,12 +494,13 @@ async function forceKillExec(container, execInstance) {
   }
 }
 
-async function executeCommand(worker, workingDirectory, cmd) {
+async function executeCommand(worker, workingDirectory, cmd, env) {
   const container = docker.getContainer(worker.containerId);
   const exec = await container.exec({
     Cmd: cmd,
     WorkingDir: workingDirectory,
     Env: [
+      ...env,
       "GIT_CONFIG_COUNT=1",
       "GIT_CONFIG_KEY_0=safe.directory",
       `GIT_CONFIG_VALUE_0=${workingDirectory}`
@@ -739,13 +741,15 @@ app.post("/run", async (req, res) => {
   let cmd;
   let image;
   let compose;
+  let env;
   try {
-    ({ project, workspace: identifier, cmd, image, compose } = req.body || {});
+    ({ project, workspace: identifier, cmd, image, compose, env } = req.body || {});
     const profile = getProfile(project);
     const resolved = resolveWorkspace(profile, identifier);
     validateCommand(profile, cmd);
+    const variables = commandEnv(env, { profile, secrets: process.env });
     worker = await ensureWorkerWithServices(project, identifier, profile, image, compose);
-    const result = await executeCommand(worker, resolved.path, cmd);
+    const result = await executeCommand(worker, resolved.path, cmd, variables);
     return res.status(result.success ? 200 : 422).json({
       success: result.success,
       ...result,
