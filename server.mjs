@@ -9,6 +9,7 @@ import { workerNetworkOptions } from "./worker-network.mjs";
 import { approvedImages, ensureLocalImage, imageAllowed } from "./worker-image.mjs";
 import { composeCli, createServiceStacks, secretDescriptions, secretNames } from "./workspace-compose.mjs";
 import { commandEnv } from "./command-env.mjs";
+import { loadProfileStore } from "./profile-store.mjs";
 
 const app = express();
 const socketPath = process.env.DOCKER_SOCKET || "/var/run/docker.sock";
@@ -21,6 +22,9 @@ const maxOutputBytes = Number.parseInt(
   10
 );
 const profilesFile = process.env.PROFILES_FILE || "/app/profiles.json";
+// One <project>.json per project plus _shared.json; read together with
+// profilesFile when both exist (see profile-store.mjs).
+const profilesDir = process.env.PROFILES_DIR || "/app/profiles";
 // Where the workers' /opt/workspace comes from, when it is not the host path in
 // profiles.json. On a Windows host that path is a 9p drvfs share and creates
 // files at ~95/s against ~4600/s on the VM's own disk, so the local stack backs
@@ -57,30 +61,6 @@ function isAuthorized(req) {
     provided.length === expected.length &&
     crypto.timingSafeEqual(provided, expected)
   );
-}
-
-function profileAliases(key) {
-  return String(key)
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-}
-
-function indexProfiles(rawProfiles) {
-  const indexed = {};
-  for (const [key, profile] of Object.entries(rawProfiles)) {
-    const aliases = profileAliases(key);
-    if (aliases.length === 0) {
-      throw Error("profile key must contain at least one name");
-    }
-    for (const alias of aliases) {
-      if (Object.hasOwn(indexed, alias)) {
-        throw Error(`duplicate profile key: ${alias}`);
-      }
-      indexed[alias] = profile;
-    }
-  }
-  return indexed;
 }
 
 function getProfile(project) {
@@ -667,25 +647,10 @@ async function clearTimedOutWorker(project, identifier, worker) {
 }
 
 async function loadProfiles() {
-  const document = JSON.parse(await fs.readFile(profilesFile, "utf8"));
-  if (!document?.shared || typeof document.shared !== "object") {
-    throw Error("profiles file must contain a shared object");
-  }
-  if (hostWorkspaceRoot) document.shared.hostWorkspaceRoot = hostWorkspaceRoot;
-  if (
-    typeof document.shared.hostWorkspaceRoot !== "string" ||
-    typeof document.shared.hermesWorkspaceRoot !== "string" ||
-    typeof document.shared.defaultWorkerWorkspaceRoot !== "string" ||
-    typeof document.shared.managedLabel !== "string" ||
-    typeof document.shared.managedLabelValue !== "string"
-  ) {
-    throw Error("profiles shared settings are incomplete");
-  }
-  if (!document.profiles || typeof document.profiles !== "object") {
-    throw Error("profiles file must contain profiles");
-  }
-  shared = document.shared;
-  profiles = indexProfiles(document.profiles);
+  const store = await loadProfileStore({ profilesFile, profilesDir, hostWorkspaceRoot });
+  shared = store.shared;
+  profiles = store.profiles;
+  console.log(`loaded ${Object.keys(profiles).length} profile names from ${store.sources.join(" and ")}`);
 }
 
 app.use(express.json({ limit: "32kb" }));

@@ -6,9 +6,26 @@ Hermes and the runner are long-lived. Hermes has no Docker socket. Hermes sends 
 
 A profile JSON key may list several names, comma-separated, for example `"godot-td,tower-defense"`. Each name resolves to the same profile. Names are trimmed; empty or duplicate names are rejected at startup.
 
+## Profile files
+
+Profiles can be kept in either of two formats, or both at once. Both are supported permanently.
+
+- **Single file** (`PROFILES_FILE`, default `/app/profiles.json`, optional and skipped when missing): `{ "shared": {...}, "profiles": { "<name>[,<alias>...]": {...} } }`. See `profiles.example.json`.
+- **Folder** (`PROFILES_DIR`, default `/app/profiles`; this repo keeps its profiles here and the image ships them): `_shared.json` holds the `shared` object, and each `<project>.json` holds one profile. The file name without `.json` is the project name and must match `^[A-Za-z0-9][A-Za-z0-9._-]*# Profile-based worker runner
+
+Hermes and the runner are long-lived. Hermes has no Docker socket. Hermes sends only approved request fields: `project`, relative `workspace`, optional/required `image` (from worktree `.hermes/hermes_config.yaml`, else `.agents/...`), and a tokenized `cmd` array. The runner owns profiles, creates one disposable worker per project/workspace, and pulls an image only when an operator approved it and the host lacks it.
+
+`/workers/release` stops or removes every managed worker for that issue, not just the exact `project`+`workspace` pair. A close of `godot-td` / `godot-td/issue-window-modals-skip-wood-frame` also clears leftover alias containers such as `ai-worker-poke-defense-godot-poke-defense-godot-issue-window-modals-skip-wood-frame-*`. Matching uses the exact `issue-<slug>` tail (or container name `ai-worker-*-issue-<slug>-<12hex>`). Other known profile keys are left alone.
+
+. An optional `"aliases": ["other-name"]` field adds more names for the same profile (the field is removed before use). Other files whose names start with `_` or `.` (such as `.gitkeep`) and non-`.json` files are ignored. See `profiles.example/`.
+
+The runner reads whichever formats exist, once at startup. When both exist they are merged: a name or alias defined twice anywhere stops startup. `shared` may come from either; if both define it and they differ, `_shared.json` wins and a warning is logged. Startup fails when neither format exists, when no `shared` object is found, or when no profiles load.
+
+`node migrate-profiles.mjs [profiles.json] [profiles/]` splits a single file into the folder format (`"a,b"` becomes `a.json` with `"aliases": ["b"]`). It is idempotent, refuses to overwrite a file with different content, and never changes the source file; remove or rename `profiles.json` afterwards, or every name is defined twice.
+
 ## Shared path configuration
 
-The profile file has one `shared` section:
+The profiles have one `shared` section (`shared` in `profiles.json`, or `profiles/_shared.json`):
 
 - `hostWorkspaceRoot`: host dataset root used by Docker bind mounts (Docker-engine path on the host that runs the runner).
 - `hermesWorkspaceRoot`: path where Hermes sees the same dataset (container path, typically `/opt/workspace/git-workspaces`).
@@ -133,9 +150,11 @@ docker run --rm --name profile-worker-runner \
   -p 127.0.0.1:8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock:rw \
   -v /path/to/git-workspaces:/workspace/workspaces:ro \
-  -v /path/to/profiles.json:/app/profiles.json:ro \
+  -v /path/to/profiles:/app/profiles:ro \
   -e RUNNER_TOKEN='secret' profile-worker-runner:local
 ```
+
+The image contains the repository's `profiles/` folder; the mount above replaces it. To use the legacy single file instead (or as well), mount it with `-v /path/to/profiles.json:/app/profiles.json:ro`.
 
 `run_runner.sh` starts the container first, then runs `docker inspect ix-hermes-agent-hermes-agent-1 --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}'`, assigns the first network name to `NETWORK_NAME`, and executes `docker network connect "$NETWORK_NAME" profile-worker-runner`.
 
@@ -173,7 +192,7 @@ curl -G -H "Authorization: Bearer $RUNNER_TOKEN" \
   http://127.0.0.1:8080/services/logs
 ```
 
-`/profiles/<project>` answers from the profiles loaded at startup, which is what `/run` enforces. After an edit to `profiles.json` it keeps answering the old values until the runner restarts.
+`/profiles/<project>` answers from the profiles loaded at startup, which is what `/run` enforces. After an edit to `profiles.json` or a file in `profiles/` it keeps answering the old values until the runner restarts.
 
 ```bash
 curl -G -H "Authorization: Bearer ***" \
@@ -189,4 +208,4 @@ curl -G -H "Authorization: Bearer ***" \
 
 `/run` returns `success`, `exitCode`, `durationMs`, combined output, project, workspace, and worker. Commands must be non-empty token arrays, first token allowed by the profile, and never shell wrappers such as `bash -lc` or `sh -c`. Workspace must be relative and cannot contain traversal. On timeout, the runner kills the Docker exec PID, stops and force-removes the managed worker, and returns HTTP 504 with `timedOut: true`, `killResult`, and `cleanup` metadata. Ordinary non-zero exits keep the worker available for inspection.
 
-Environment: `RUNNER_TOKEN`, `NETWORK_NAME` (optional), `HERMES_CONTAINER` (optional), `WORKSPACE_ROOT`, `PROFILES_FILE=/app/profiles.json`, `RUNNER_TIMEOUT_MS=900000`, `MAX_OUTPUT_BYTES=1048576`, `ARTIFACT_ROOT`, `ARTIFACT_MAX_BYTES`, `PORT=8080`, `SERVICES_WAIT_MS=60000`, `SERVICES_UP_TIMEOUT_MS=1200000`, and every secret a profile lists in `allowedSecrets`.
+Environment: `RUNNER_TOKEN`, `NETWORK_NAME` (optional), `HERMES_CONTAINER` (optional), `WORKSPACE_ROOT`, `PROFILES_FILE=/app/profiles.json`, `PROFILES_DIR=/app/profiles`, `RUNNER_TIMEOUT_MS=900000`, `MAX_OUTPUT_BYTES=1048576`, `ARTIFACT_ROOT`, `ARTIFACT_MAX_BYTES`, `PORT=8080`, `SERVICES_WAIT_MS=60000`, `SERVICES_UP_TIMEOUT_MS=1200000`, and every secret a profile lists in `allowedSecrets`.
