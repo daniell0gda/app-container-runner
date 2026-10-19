@@ -1,0 +1,41 @@
+{
+  "image": "nexus.pdtec.lan:5500/linux-nodejs:lts",
+  "allowedImages": [
+    "postgres:16",
+    "nexus.pdtec.lan:5500/linux-dotnet-sdk:*",
+    "nexus.pdtec.lan:5500/pdtec-tetra-*",
+    "nexus.pdtec.lan:5500/linux-playwright:*"
+  ],
+  "allowedSecrets": {
+    "ICE_LICENSE_8": "The ice.NET 8 licence, issued for agent runs and supplied by the runner. A service that needs a licence sets ICE_LIC_PATH: ${ICE_LICENSE_8}; a command that needs one, such as a server started with dotnet run, gets it from the same line under env: in hermes_config.yaml. No licence file or mount is needed, and it is not a trick."
+  },
+  "allowedExecutables": [
+    "npm",
+    "npx",
+    "node",
+    "git",
+    "dotnet"
+  ],
+  "mounts": [
+    {
+      "sourceFromShared": "hostWorkspaceRoot",
+      "target": "/opt/workspace",
+      "readOnly": false
+    }
+  ],
+  "user": "1008:1008",
+  "env": {
+    "NODE_ENV": "development",
+    "npm_config_cache": "/opt/workspace/.npm-cache",
+    "HOME": "/tmp"
+  },
+  "command": [
+    "sleep",
+    "infinity"
+  ],
+  "entrypoint": [],
+  "resources": {
+    "memory": "10g",
+    "cpus": 2
+  }
+}
